@@ -2,24 +2,28 @@
 
 > 给贡献者和未来的自己看的规则本。面向用户的介绍在仓库根目录的 [README.md](../README.md)（中文）/ [README.en.md](../README.en.md)。
 
-Pastory 是 macOS 15+ 的菜单栏工具：剪贴板历史面板 + 截图标注 / 识别文字 / 区域录屏。SwiftPM，AppKit + SwiftUI，只用 Apple 框架和系统 libsqlite3，没有第三方依赖。
+Pastory 是 macOS 15+ 的菜单栏工具：剪贴板历史面板 + 截图标注 / 识别文字 / 区域录屏。Rust，objc2 手写 AppKit（不用第三方 UI 框架），链接系统 libsqlite3。Swift 版在 `Sources/Pastory/` 里冻结归档、是行为基准（现行 1.0.6 的可发行档经替换决策仍为 Rust 构建，见 [RUST_REWRITE.md](RUST_REWRITE.md) §6 M7）。
 
 ## 目录
 
 ```
-Package.swift        macOS 15+，Swift 6 工具链、v5 语言模式
-build.sh             swift build → build/Pastory.app → codesign（有 Developer ID 用它，否则 ad-hoc）
-dist.sh              universal 构建 + 公证 + 盖章 → dist/Pastory-<版本>.zip
-release.sh           dist.sh → 打 tag → GitHub Release（版本号来自 Info.plist）
-Resources/           Info.plist、entitlements（空）、AppIcon.icns、Logo / MenuIcon / Pushpin、Fonts/（Caveat、Ysabeau Office 及各自的 OFL）
-Sources/Pastory/
-  App/               入口、菜单栏、全局快捷键、权限、偏好、更新器、双语表、主题、自测
-  Capture/           取屏、框选浮层、截图、区域录屏、GIF 编码、录屏预览
-  Annotate/          标注画布与工具条、手绘渲染、OCR 与识别文字面板
-  Clipboard/         剪贴板监听、条目模型、SQLite 索引 + 文件存储、保留期清理、导入
-  Shelf/             剪贴板面板、卡片、设置页、文本 / 图片编辑窗、导出
-docs/                本文件、README 用图
+Cargo.toml (rust/)         Rust 单 crate 二进制 pastory（objc2 生态 + rusqlite，链接系统 libsqlite3）
+build-rs.sh               cargo build → build/Pastory.app → codesign（有 Developer ID 用它，否则 ad-hoc）
+dist.sh / release.sh      未变（universal 构建 + 公证 + 盖章 → dist/Pastory-<版本>.zip；只换二进制来源）
+Resources/                 Info.plist、entitlements（空）、AppIcon.icns、Logo / MenuIcon / Pushpin、Fonts/（Caveat、Ysabeau Office 及各自的 OFL）
+rust/src/
+  App/                     入口、菜单栏、全局快捷键、权限、偏好、更新器、双语表、主题、自测
+  Capture/                 取屏、框选浮层、截图、区域录屏、GIF 编码、录屏预览
+  Annotate/                标注画布与工具条、手绘渲染、OCR 与识别文字面板
+  Clipboard/               剪贴板监听、条目模型、SQLite 索引 + 文件存储、保留期清理、导入
+  Shelf/                   剪贴板面板、卡片、设置页、文本 / 图片编辑窗、导出
+Sources/Pastory/           Swift 版归档（行为基准；1.0.6 起不再改）
+docs/                      本文件、RUST_REWRITE.md（Rust 重写记录）、README 用图
 ```
+
+- 新文件放进对应子目录，一个类型一个文件。
+- 临时产物（测试截图、抽样图片）不进项目目录。
+- bundle id 是 `com.cici.snipclip`（产品早期代号），**不能改**：改了用户的屏幕录制、辅助功能授权和全部设置都会丢。
 
 - 新文件放进对应子目录，一个类型一个文件。
 - 临时产物（测试截图、抽样图片）不进项目目录。
@@ -28,14 +32,14 @@ docs/                本文件、README 用图
 ## 构建、分发、发布
 
 ```bash
-./build.sh                 # 本机架构，build/Pastory.app
-./dist.sh                  # arm64 + x86_64，签名、公证、盖章，dist/Pastory-<版本>.zip 和 首次打开.txt
+./build-rs.sh              # 本机架构，build/Pastory.app（cargo 单 crate；Rust 工具链 stable 即可）
+./dist.sh                  # arm64 + x86_64，签名、公证、盖章，dist/Pastory-<版本>.zip 和 首次打开.txt（只换二进制来源）
 ./release.sh notes.md      # 先改 Resources/Info.plist 的 CFBundleShortVersionString 并提交，再跑
 ```
 
-只需要 Command Line Tools。没有 Developer ID 证书的机器上两个脚本自动退回 ad-hoc，`首次打开.txt` 会换成「仍要打开」版本。公证凭据是钥匙串 profile `pastory-notary`（`xcrun notarytool store-credentials`），仓库里没有任何密钥。发布包用 Developer ID 签名 + hardened runtime，`spctl --assess` 应显示 `source=Notarized Developer ID`。
+只需要 Rust stable 和 Command Line Tools。没有 Developer ID 证书的机器上两个脚本自动退回 ad-hoc，`首次打开.txt` 会换成「仍要打开」版本。公证凭据是钥匙串 profile `pastory-notary`（`xcrun notarytool store-credentials`），仓库里没有任何密钥。发布包用 Developer ID 签名 + hardened runtime，`spctl --assess` 应显示 `source=Notarized Developer ID`。
 
-**更新器**（`App/Updater.swift`）：启动 30 秒后、之后每 24 小时读 `api.github.com/repos/nothingbutcici/pastory/releases/latest`，这是 app 唯一的网络请求，可在设置关闭。tag 必须是 `v<版本>`，资产是 `.zip`。只有 Developer ID 签名的包才自动安装：下载（有进度窗、可取消、30 秒无响应判失败）→ 后台解压 → `codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = <本 Team>"` → TeamIdentifier 与运行中的自己一致 → `replaceItemAt` 原地替换 → 重启。ad-hoc 包、被 App Translocation 挪走的包只打开下载页。
+**更新器**（`rust/src/App/updater.rs`，对应 Swift `App/Updater.swift`）：启动 30 秒后、之后每 24 小时读 `api.github.com/repos/nothingbutcici/pastory/releases/latest`，这是 app 唯一的网络请求，可在设置关闭。tag 必须是 `v<版本>`，资产是 `.zip`。只有 Developer ID 签名的包才自动安装：下载（有进度窗、可取消、30 秒无响应判失败）→ 后台解压 → `codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = <本 Team>"` → TeamIdentifier 与运行中的自己一致 → `replaceItemAt` 原地替换 → 重启。ad-hoc 包、被 App Translocation 挪走的包只打开下载页。
 
 ## 存储
 
@@ -115,3 +119,19 @@ PASTORY_LANG=en …                                        # 任何渲染类自�
 - 不做条目合并 / 拼接；不做鼠标高亮、缩放、剪辑。
 - 文件条目只存路径引用，源文件删了卡片就失效。
 - 不上云；要跨设备自行把存储目录放进 iCloud Drive，或用「导入」把另一台机器的 Pastory 文件夹导过来（文本 / 链接 / 图片）。
+
+## Rust 版差异点（针对 Swift → Rust 迁移审计）
+
+下面是 Rust 版在工程层面和 Swift 版的有意识差别，**都是行为等价的，只影响“怎么建”不影响“行为是”**。详细记录见 [RUST_REWRITE.md](RUST_REWRITE.md) §6 M0–M6。
+
+- **构建管线**：只换 `swift build` → `cargo build`（`build-rs.sh`）。universal 用 `cargo build --target {aarch64,x86_64}-apple-darwin` + `lipo -create`（§3.4）。bundle id / Info.plist / 资源 / entitlements 共用 `Resources/`，dist.sh / release.sh 的公证流程不动。
+- **模块结构**：`rust/src/{App,Capture,Annotate,Clipboard,Shelf}` 沿用大写目录，Rust `crate::` 路径全小写，经 `#[path = "App/…"]` 显式挂载，不依赖 APFS 大小写不敏感（M1 工程要点③）。
+- **`--selftest`**：仍是运行时参数不是编译期 feature（§9）。mutating 名单 = Swift 同款 15+1 条；`PASTORY_STORE` / `PASTORY_LANG` 在 launch.rs 判定（Swift 在 `Sandbox.swift`）。
+- **`menu_icon()` 是 OnceLock 但指针要 `Retained::retain`**（M6 工程要点①）：M0 的 `into_raw → from_raw` 会吃 NULL class crash——状态栏自己 retain 同一只 mask 一直没露，欢迎卡 footer 第一家独立读者把它找出来。给图标做 OnceLock 缓存时别再 `into_raw`/`from_raw`。
+- **属性串 ranges 一律 `storage.string().length()`**：UTF-8 字节长 ≠ UTF-16 单元长，CJK 走到 `addAttributes(_:range:)` 用 `text.len()` 就是越界 + NSRangeException（Rust 只能 abort）。这是 M4 的 annotate_view 和 M6 的 TextEditorWindow 都踩过的，**编码 NSAttributedString / NSTextStorage 的任何 Rust 代码都必须用 `length()` 不是字节**。
+- **`SMAppService` 用 ObjC 运行名，不是 Swift rename**：`MainMenu` 的「登录时启动」走 `mainAppService()` selector（header 是 `@property (class) SMAppService *mainAppService NS_SWIFT_NAME(mainApp)`），`ServiceManagement.framework` 要 `NSBundle.load` 懒加载（M6 工程要点③）。
+- **Importer 的 LZFSE 用系统 Foundation `NSData.decompressedUsingAlgorithm`，不引第三方 lzfse crate**（M6 工程要点④）：Paste 自己就调这套算法；帧头 `bvx…` ↔ `COMPRESSION_LZFSE(0x801)`、zlib(0x205)、LZ4(0x100)、LZMA(0x306)，枚举值取自 SDK compression.h，64 MB 上限与 Swift 同。
+- **`objc2` 生成绑定 ≠ ObjC 大小写**：`CG/CF` 全走 `cf_type` 关联函数（`CGImage::width(Some(&g))`）、返回值 `objc2_core_foundation::CFRetained`；AppKit selector 保持 ObjC 大小写（`setData_forType`，M1 工程要点④）。框架 crate 不绑的用 `extern_methods!` 手 declare（M0 spike 已打过 CGEvent post(tap:)、QLPreviewPanel、`NSPasteboard.releaseGlobally`、`AXIsProcessTrustedWithOptions`、`CGShieldingWindowLevel` 这几只）。
+- **`objc2-av-foundation` 的 `startSession` / `appendPixelBuffer` 要显式开 feature**：M5 在 `Cargo.toml` 里把 `objc2-core-media` / `objc2-core-video` 两个 feature 加上；不加，写者/编码链 Commit 时编译报「该 selector 不在 available list」。
+- **`Write` 大文件别一次写完**（M6 工程要点⑤）：settings_pane / importer / text_editor / image_editor / contact_pane / welcome_card / desktop_notes 都踩过「一次 Write 完 → 编译 fragment 重叠 → 拆修」。要加新面板，先把骨架 Write 落位，跑通 `cargo build` 后再逐步往里加。
+- **pane 的 `draw()` 别再扣侧栏**：货架右侧 pane（settings/contact）frame 已经是 `view::content_rect`（侧栏之右 x=182 起），Swift 的 `.padding(.horizontal, 24)` 落在 view 内 x=4；draw() 里再按整面板宽扣一遍侧栏就是双偏移双缩窄（真机 1920×482 下内容挤中、右侧空带）。**渲染对齐验收必须按真机面板尺寸渲染**（`PASTORY_WIDTH=1920 PASTORY_HEIGHT=482`），与 Swift 自测同帧同图不算数——Swift 自测帧本身可能不代表真机（M7 后真机首验踩过，见 RUST_REWRITE §6 M7 尾注）。设置页还有纵向滚动：draw 内 y 累加器 `−scroll` + header 62pt 以下 `addClip` + hotspots 用平移后坐标。
