@@ -31,7 +31,8 @@ jobs:
       - name: Build universal .app bundle
         # No Developer ID identity on the runner → ad-hoc signed (documented
         # in the release notes; local builds pick the keychain identity).
-        run: ARCHS="arm64 x86_64" ./build-rs.sh
+        # ARCHS uses Rust target names (aarch64, not arm64).
+        run: ARCHS="aarch64 x86_64" ./build-rs.sh
 
       - name: Zip the bundle
         working-directory: build

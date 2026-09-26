@@ -22,10 +22,11 @@ fi
 REPO="$(pwd)/.."
 
 # ARCHS="arm64 x86_64" builds each slice with --target and lipo's them;
-# default is this machine only.
+# default is this machine only. `$=ARCHS` word-splits: zsh does not split
+# unquoted expansions (this runs under /bin/zsh, CI included).
 if [ -n "${ARCHS:-}" ]; then
     SLICES=()
-    for a in $ARCHS; do
+    for a in $=ARCHS; do
         cargo build -r --target "$a-apple-darwin"
         SLICES+=("target/$a-apple-darwin/$CONFIG/pastory")
     done
