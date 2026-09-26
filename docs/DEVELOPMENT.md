@@ -124,7 +124,7 @@ PASTORY_LANG=en …                                        # 任何渲染类自�
 
 下面是 Rust 版在工程层面和 Swift 版的有意识差别，**都是行为等价的，只影响“怎么建”不影响“行为是”**。详细记录见 [RUST_REWRITE.md](RUST_REWRITE.md) §6 M0–M6。
 
-- **构建管线**：只换 `swift build` → `cargo build`（`build-rs.sh`）。universal 用 `cargo build --target {aarch64,x86_64}-apple-darwin` + `lipo -create`（§3.4）。bundle id / Info.plist / 资源 / entitlements 共用 `Resources/`，dist.sh / release.sh 的公证流程不动。
+- **构建管线**：只换 `swift build` → `cargo build`（`build-rs.sh`）。universal 用 `cargo build --target {aarch64,x86_64}-apple-darwin` + `lipo -create`（§3.4）。bundle id / Info.plist / 资源 / entitlements 共用 `Resources/`，dist.sh / release.sh 的公证流程不动。**仓库现居 `Claudate/pastory-rust`**；打 `v*` tag 即触发 `.github/workflows/release.yml`（macos-14 跑 `ARCHS="arm64 x86_64" ./build-rs.sh` → ad-hoc 签 → ditto zip → 发 GitHub Release）。CI 无 Developer ID，产物是 ad-hoc 签名——自己用/内测没问题，对外分发仍走 release.sh 的公证流程。Windows job 有意缺席：crate 全量构建于 macOS-only API（objc2-app-kit / ScreenCaptureKit / Vision / Carbon / NSPasteboard），要等平台层做 Windows 移植（pastory-core 拆分）后才有可出的物。
 - **模块结构**：`rust/src/{App,Capture,Annotate,Clipboard,Shelf}` 沿用大写目录，Rust `crate::` 路径全小写，经 `#[path = "App/…"]` 显式挂载，不依赖 APFS 大小写不敏感（M1 工程要点③）。
 - **`--selftest`**：仍是运行时参数不是编译期 feature（§9）。mutating 名单 = Swift 同款 15+1 条；`PASTORY_STORE` / `PASTORY_LANG` 在 launch.rs 判定（Swift 在 `Sandbox.swift`）。
 - **`menu_icon()` 是 OnceLock 但指针要 `Retained::retain`**（M6 工程要点①）：M0 的 `into_raw → from_raw` 会吃 NULL class crash——状态栏自己 retain 同一只 mask 一直没露，欢迎卡 footer 第一家独立读者把它找出来。给图标做 OnceLock 缓存时别再 `into_raw`/`from_raw`。
