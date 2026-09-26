@@ -1,0 +1,47 @@
+name: Release
+
+# Tag-driven release pipeline. `git tag v1.0.7 && git push origin v1.0.7`
+# builds and publishes `Pastory-<version>-macos-universal.zip` to Releases.
+#
+# Windows is intentionally absent: `rust/` builds on macOS-only APIs
+# (objc2-app-kit, ScreenCaptureKit, Vision OCR, Carbon hotkeys, NSPasteboard).
+# A `windows` job lands together with the Windows port of those platform
+# layers (pastory-core split + windows-rs UI); there is no honest Windows
+# artifact to produce before that work exists. See docs/RUST_REWRITE.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS universal
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + both Apple targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Build universal .app bundle
+        # No Developer ID identity on the runner → ad-hoc signed (documented
+        # in the release notes; local builds pick the keychain identity).
+        run: ARCHS="arm64 x86_64" ./build-rs.sh
+
+      - name: Zip the bundle
+        working-directory: build
+        run: |
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Pastory.app/Contents/Info.plist)"
+          ditto -c -k --sequesterRsrc --keepParent Pastory.app "Pastory-${VERSION}-macos-universal.zip"
+          shasum -a 256 "Pastory-${VERSION}-macos-universal.zip"
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Pastory-*-macos-universal.zip
+          generate_release_notes: true
