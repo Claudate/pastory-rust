@@ -44,18 +44,23 @@ pub fn recognize(image: &CGImage) -> Result<String, String> {
         list.push(o);
     }
     // Vision's order is mostly reading order already; sort by top edge,
-    // then left edge.
+    // then left edge. The comparison must be a total order or `sort_by`
+    // panics, and a tolerance test is not one (a≈b, b≈c, but a≉c is
+    // possible). Quantising the top edge into 0.01-tall bands gives a real
+    // key: same band means same line, so those sort left-to-right; otherwise
+    // top-to-bottom (descending y — Vision's origin is bottom-left).
     list.sort_by(|a, b| {
         let (ar, br) = (unsafe { a.boundingBox() }, unsafe { b.boundingBox() });
-        let (ay, by) = (
-            ar.origin.y + ar.size.height,
-            br.origin.y + br.size.height,
+        let band = |y: f64| (y / 0.01).round() as i64;
+        let (ab, bb) = (
+            band(ar.origin.y + ar.size.height),
+            band(br.origin.y + br.size.height),
         );
-        if (ay - by).abs() > 0.01 {
-            by.partial_cmp(&ay).unwrap_or(std::cmp::Ordering::Equal)
-        } else {
-            ar.origin.x.partial_cmp(&br.origin.x).unwrap_or(std::cmp::Ordering::Equal)
-        }
+        bb.cmp(&ab).then_with(|| {
+            ar.origin.x
+                .partial_cmp(&br.origin.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
     let mut lines: Vec<String> = Vec::new();
     for o in &list {
