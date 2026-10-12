@@ -6,6 +6,8 @@ set -euo pipefail
 cd "$(dirname "$0")/rust"
 
 CONFIG="${CONFIG:-release}"
+# PASTEJAR_FEED_HOST=<feed 域名> 编译期烧进两级取源（docs/MAS_PLAN.md §1-2）；
+# cargo 继承 shell 环境，脚本不主动传——不设置则只走 GitHub（旧行为）。
 # A Developer ID identity in the keychain is used automatically (same
 # signature as the shipped app, so permissions carry over between a local
 # build and a release); otherwise ad-hoc.

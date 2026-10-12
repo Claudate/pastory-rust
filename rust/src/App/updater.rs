@@ -1,6 +1,8 @@
-//! Port of `App/Updater.swift` — GitHub Releases check, once a day and on
-//! demand. The only network request PasteJar ever makes; it carries no
-//! identifier (settings can turn it off).
+//! Port of `App/Updater.swift` — release check once a day and on demand,
+//! feed-first with a GitHub fallback (docs/MAS_PLAN.md §1-2). The only network
+//! request PasteJar ever makes; it carries no identifier (settings can turn it
+//! off). The feed is a compile-time host (`FEED_HOST`): unset builds — like
+//! every build shipped before the feed — talk to GitHub alone.
 //!
 //! Networking runs through NSURLSession (objc2-foundation), matching the
 //! Swift implementation's delegate/session behaviour. Pure helpers (parse,
@@ -25,6 +27,18 @@ use crate::app::localization::l;
 use crate::app::preferences::Preferences;
 
 pub const REPO: &str = "Claudate/pastory-rust";
+
+/// Optional self-hosted feed host (e.g. `feed.example.com`), baked in at
+/// compile time via `PASTEJAR_FEED_HOST` (build-rs.sh passes it through).
+/// Unset → None: the updater talks to GitHub alone. The feed is trusted only
+/// as an HTTPS origin for metadata/zip; the codesign chain in
+/// `verify_and_install` stays the real gate.
+pub const FEED_HOST: Option<&str> = option_env!("PASTEJAR_FEED_HOST");
+
+/// The trimmed feed host, or None when unset/empty/bogus (no dot).
+pub fn feed_base() -> Option<&'static str> {
+    FEED_HOST.map(|h| h.trim()).filter(|h| !h.is_empty() && h.contains('.'))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Release {
@@ -144,6 +158,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn zip_hosts() {
+        assert!(zip_host_allowed("github.com"));
+        assert!(zip_host_allowed("objects.githubusercontent.com"));
+        // Trailing-suffix fakes must not pass; github.com subdomains are
+        // GitHub-issued, so they stay allowed (unchanged Swift rule).
+        assert!(!zip_host_allowed("evil.github.com.attacker.net"));
+        assert!(zip_host_allowed("api.github.com"));
+        assert!(!zip_host_allowed("example.com"));
+        match feed_base() {
+            Some(f) => assert!(zip_host_allowed(f)),
+            None => assert!(!zip_host_allowed("feed.example.com")),
+        }
+    }
+
+    #[test]
     fn version_compare() {
         assert!(is_newer("1.2", "1.0"));
         assert!(is_newer("1.0.1", "1.0"));
@@ -167,6 +196,16 @@ mod tests {
 }
 
 // MARK: JSON parse
+
+/// Installer hosts: GitHub's own (the fallback source ships there) plus the
+/// compile-time feed host when configured. Anything else is refused before a
+/// byte is downloaded; the signature verification afterwards is the real gate.
+pub fn zip_host_allowed(h: &str) -> bool {
+    h == "github.com"
+        || h.ends_with(".github.com")
+        || h.ends_with(".githubusercontent.com")
+        || feed_base().map(|f| h == f).unwrap_or(false)
+}
 
 /// GitHub release JSON → `Release` (`Updater.swift:81`), via NSJSONSerialization
 /// so the read semantics (any-value tree) match Foundation exactly.
@@ -197,18 +236,12 @@ pub fn parse_release(data: &[u8]) -> Result<Release, String> {
             }
             let url_s = { a.objectForKey(ns_string!("browser_download_url")) }
                 .map(|u| unsafe { Retained::cast_unchecked::<NSString>(u) }.to_string())?;
-            // Only ever fetch an installer over https from GitHub's own hosts.
+            // Only ever fetch an installer over https from an allowed host.
             let url = NSURL::URLWithString(&NSString::from_str(&url_s))?;
             let scheme = url.scheme().map(|s| s.to_string());
             let host = url.host().map(|s| s.to_string());
             match (scheme.as_deref(), host.as_deref()) {
-                (Some("https"), Some(h))
-                    if h == "github.com"
-                        || h.ends_with(".github.com")
-                        || h.ends_with(".githubusercontent.com") =>
-                {
-                    Some(url_s)
-                }
+                (Some("https"), Some(h)) if zip_host_allowed(h) => Some(url_s),
                 _ => None,
             }
         });
@@ -370,9 +403,83 @@ pub fn check(interactive: bool, quiet: bool) {
     check_with(interactive, quiet, |_| {});
 }
 
-/// The only HTTP GET of the app. 15 s request timeout, no identifier beyond
-/// the version in the User-Agent (matches Swift).
+/// The only HTTP GETs of the app: the feed leg first when one is compiled in,
+/// then the GitHub leg. 15 s timeout, no identifier beyond the version in the
+/// User-Agent. A feed hiccup must never hide an update — any non-success
+/// (transport, status, or unparseable JSON) falls through to GitHub, which is
+/// the pre-feed behaviour kept verbatim.
 pub fn fetch_latest(done: impl FnOnce(Result<Release, String>) + Send + 'static) {
+    if let Some(feed) = feed_base() {
+        let feed_url = format!("https://{feed}/v1/releases/latest");
+        http_get(&feed_url, "application/json", move |res| match res {
+            Ok(bytes) => match parse_release(&bytes) {
+                Ok(rel) => done(Ok(rel)),
+                Err(_) => fetch_github_latest(done),
+            },
+            Err(_) => fetch_github_latest(done),
+        });
+        return;
+    }
+    fetch_github_latest(done);
+}
+
+/// One GET → raw bytes. Same session/timeout/UA shape as the GitHub leg.
+fn http_get(
+    url_str: &str,
+    accept: &str,
+    done: impl FnOnce(Result<Vec<u8>, String>) + Send + 'static,
+) {
+    let Some(url) = NSURL::URLWithString(&NSString::from_str(url_str)) else {
+        done(Err("bad url".into()));
+        return;
+    };
+    let req_alloc: *mut NSMutableURLRequest = unsafe { msg_send![objc2::class!(NSMutableURLRequest), alloc] };
+    let req: Retained<NSMutableURLRequest> = unsafe {
+        let built: *mut NSMutableURLRequest = msg_send![req_alloc, initWithURL: &*url];
+        Retained::from_raw(built).expect("request built")
+    };
+    unsafe {
+        // SAFETY: NSString header values on the standard request interface.
+        let a = NSString::from_str(accept);
+        let ua = NSString::from_str(&format!("PasteJar/{}", current_version()));
+        let k1 = NSString::from_str("Accept");
+        let k2 = NSString::from_str("User-Agent");
+        let _: () = msg_send![&*req, setValue: &*a, forHTTPHeaderField: &*k1];
+        let _: () = msg_send![&*req, setValue: &*ua, forHTTPHeaderField: &*k2];
+    }
+    req.setTimeoutInterval(15.0);
+    let done = std::rc::Rc::new(std::cell::RefCell::new(Some(done)));
+    let block = RcBlock::new(
+        move |data: *mut NSData, response: *mut objc2_foundation::NSURLResponse, error: *mut NSError| {
+            let Some(done) = done.borrow_mut().take() else { return };
+            if !error.is_null() {
+                done(Err(unsafe { &*error }.localizedDescription().to_string()));
+                return;
+            }
+            if data.is_null() {
+                done(Err("no data".into()));
+                return;
+            }
+            if let Some(resp) = unsafe { response.as_ref() } {
+                let http: &NSHTTPURLResponse =
+                    unsafe { &*(resp as *const objc2_foundation::NSURLResponse as *const NSHTTPURLResponse) };
+                if http.statusCode() != 200 {
+                    done(Err(format!("http {}", http.statusCode())));
+                    return;
+                }
+            }
+            done(Ok(unsafe { (&*data).as_bytes_unchecked().to_vec() }));
+        },
+    );
+    unsafe {
+        let session = NSURLSession::sharedSession();
+        let task = session.dataTaskWithRequest_completionHandler(&req, &block);
+        task.resume();
+    }
+}
+
+/// The fallback leg: GitHub, kept exactly as shipped before the feed existed.
+fn fetch_github_latest(done: impl FnOnce(Result<Release, String>) + Send + 'static) {
     let url = NSURL::URLWithString(&NSString::from_str(&format!(
         "https://api.github.com/repos/{REPO}/releases/latest"
     )))
@@ -492,16 +599,17 @@ fn activate() {
 }
 
 /// What went wrong, in words the user can act on. Network trouble reaching
-/// GitHub is by far the usual cause.
+/// the update source is by far the usual cause; the wording stays source-
+/// neutral because the feed and GitHub differ per build.
 pub fn describe_error(detail: &str, long: bool) -> String {
     match detail {
         "signature" => l("下载的更新包没有通过签名校验，已放弃安装。"),
         "archive" => l("下载的更新包不完整。"),
         s if l("暂无发布版本") == s => s.to_string(),
         _ if long => l(
-            "连不上 GitHub，更新包没有下载下来。\n\n部分网络直连 GitHub 不稳定：可以打开代理后重试，或者从下载页手动下载。",
+            "连不上更新源，更新包没有下载下来。\n\n打开代理再试一次，或者从下载页手动下载。",
         ),
-        _ => l("连不上 GitHub（可能需要代理）"),
+        _ => l("连不上更新源（可能需要代理）"),
     }
 }
 

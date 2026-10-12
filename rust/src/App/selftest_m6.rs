@@ -218,6 +218,21 @@ pub fn updater() -> bool {
         ("notes: en half", crate::app::updater::notes_for_display("中文\n---\n**New**\n- one", "1.2", true) == "New\n•  one"),
         ("notes: legacy brand title stripped", crate::app::updater::notes_for_display("Pastory Rust 1.3\n\n- old", "1.3", true) == "•  old"),
         ("notes: no divider keeps all", crate::app::updater::notes_for_display("- a\n- b", "1.2", true) == "•  a\n•  b"),
+        ("feed schema: ext keys parse; unknown host refused", {
+            // Cloudflare feed doc (docs/MAS_PLAN.md §1.1): sha256/mas extension
+            // keys must not break parsing, and the zip host whitelist is what
+            // gates the download — only GitHub's hosts plus the compiled-in
+            // feed host pass.
+            let feed = r#"{"tag_name":"v1.3","html_url":"https://github.com/Claudate/pastory-rust/releases/tag/v1.3","body":"- feed notes",
+  "assets":[{"name":"PasteJar-1.3.zip","browser_download_url":"https://feed.example.com/files/PasteJar-1.3.zip","sha256":"aa"},{"name":"notes.txt","browser_download_url":"https://feed.example.com/files/notes.txt"}],"mas":{"store_url":"macrod://x"}}"#;
+            match crate::app::updater::parse_release(feed.as_bytes()) {
+                Ok(rel) => {
+                    let host_is_feed = crate::app::updater::FEED_HOST == Some("feed.example.com");
+                    rel.version == "1.3" && rel.notes.contains("feed notes") && rel.zip_url.is_some() == host_is_feed
+                }
+                Err(_) => false,
+            }
+        }),
         ("ad-hoc build must not self-install", {
             // The dev build of this binary is ad-hoc-signed: it must never
             // replace itself (Swift checks teamIdentifier==nil → canSelfInstall false).
