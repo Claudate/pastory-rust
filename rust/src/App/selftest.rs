@@ -210,9 +210,11 @@ fn run(cmd: &str, rest: &[String]) -> bool {
         "editors" => crate::app::selftest_m6::editors(
             rest.first().map(String::as_str).unwrap_or("pastory-editor.png"),
         ),
+        #[cfg(not(feature = "mas"))]
         "updatewin" => crate::app::selftest_m6::updatewin(
             rest.first().map(String::as_str).unwrap_or("pastory-updatewin.png"),
         ),
+        #[cfg(not(feature = "mas"))]
         "download" => crate::app::selftest_m6::download(rest),
         "updater" => crate::app::selftest_m6::updater(),
         "import" => crate::app::selftest_m6::import(rest),

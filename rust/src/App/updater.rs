@@ -10,7 +10,9 @@
 //! `updater` self-test runs without network; the interactive flow hops back
 //! to the main queue like Swift's `@MainActor`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+#[cfg(not(feature = "mas"))]
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use block2::RcBlock;
@@ -46,6 +48,9 @@ pub struct Release {
     pub notes: String,
     pub zip_url: Option<String>,
     pub page: String,
+    /// `mas.store_url` (feed extension key): App Store listing link once the
+    /// store build ships; unused by the direct build's updater.
+    pub store_url: Option<String>,
 }
 
 /// Current version, from the bundle.
@@ -69,6 +74,7 @@ pub fn current_version() -> String {
 /// The running `.app` bundle's path: `<x>.app/Contents/MacOS/pastory` → the
 /// `.app` (the `updatewin`/`download` self-tests run the bare binary but never
 /// reach this).
+#[cfg(not(feature = "mas"))]
 pub fn bundle_path() -> PathBuf {
     let exe = std::env::current_exe().expect("exe path");
     exe.ancestors()
@@ -251,11 +257,16 @@ pub fn parse_release(data: &[u8]) -> Result<Release, String> {
     let notes = { dict.objectForKey(ns_string!("body")) }
         .map(|u| unsafe { Retained::cast_unchecked::<NSString>(u) }.to_string())
         .unwrap_or_default();
+    let store_url = { dict.objectForKey(ns_string!("mas")) }
+        .map(|m| unsafe { Retained::cast_unchecked::<NSDictionary<NSString, AnyObject>>(m) })
+        .and_then(|m| m.objectForKey(ns_string!("store_url")))
+        .map(|u| unsafe { Retained::cast_unchecked::<NSString>(u) }.to_string());
     Ok(Release {
         version,
         notes,
         zip_url,
         page,
+        store_url,
     })
 }
 
@@ -263,6 +274,7 @@ pub fn parse_release(data: &[u8]) -> Result<Release, String> {
 
 /// `teamIdentifier(of:)` — one codesign call; None when the build is ad-hoc
 /// or unsigned ("not set").
+#[cfg(not(feature = "mas"))]
 pub fn team_identifier(app: &Path) -> Option<String> {
     let out = std::process::Command::new("/usr/bin/codesign")
         .args(["-dv", "--verbose=2", &app.to_string_lossy()])
@@ -289,6 +301,7 @@ pub fn team_identifier(app: &Path) -> Option<String> {
 
 /// Only a signed, notarised build knows who it is; an ad-hoc one must not
 /// replace itself with an unverifiable download.
+#[cfg(not(feature = "mas"))]
 pub fn can_self_install() -> bool {
     let bundle = bundle_path();
     let Some(team) = team_identifier(&bundle) else {
@@ -538,6 +551,42 @@ fn fetch_github_latest(done: impl FnOnce(Result<Release, String>) + Send + 'stat
 
 // MARK: Alerts
 
+/// Store variant (`--features mas`): the same daily check, but the offer has
+/// no installer at all — the newest known version is announced and the update
+/// happens in the App Store itself (docs/MAS_PLAN.md §2). The feed's
+/// `mas.store_url` points at the listing; `page` is the fallback link.
+#[cfg(feature = "mas")]
+fn offer(r: Release) {
+    crate::app::delegate::dispatch_main_async(Box::new(move || {
+        let mtm = MainThreadMarker::new().expect("main thread");
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str(
+            &l("PasteJar %@ 可以更新了（当前 %@）")
+                .replacen("%@", &r.version, 1)
+                .replacen("%@", &current_version(), 1),
+        ));
+        alert.setInformativeText(&NSString::from_str(&notes_for_display(
+            &r.notes,
+            &r.version,
+            crate::app::localization::is_english(),
+        )));
+        alert.addButtonWithTitle(&NSString::from_str(&l("打开 App Store")));
+        alert.addButtonWithTitle(&NSString::from_str(&l("稍后")));
+        alert.addButtonWithTitle(&NSString::from_str(&l("跳过这个版本")));
+        activate();
+        let response = alert.runModal();
+        if response == objc2_app_kit::NSAlertFirstButtonReturn {
+            let link = r.store_url.clone().unwrap_or_else(|| r.page.clone());
+            if let Some(url) = NSURL::URLWithString(&NSString::from_str(&link)) {
+                NSWorkspace::sharedWorkspace().openURL(&url);
+            }
+        } else if response == objc2_app_kit::NSAlertThirdButtonReturn {
+            Preferences::shared().set_skipped_version(&r.version);
+        }
+    }));
+}
+
+#[cfg(not(feature = "mas"))]
 fn offer(r: Release) {
     crate::app::delegate::dispatch_main_async(Box::new(move || {
         let mtm = MainThreadMarker::new().expect("main thread");
@@ -553,11 +602,8 @@ fn offer(r: Release) {
             crate::app::localization::is_english(),
         )));
         let can_install = r.zip_url.is_some() && can_self_install();
-        alert.addButtonWithTitle(&NSString::from_str(if can_install {
-            "下载并安装"
-        } else {
-            "打开下载页"
-        }));
+        let go = if can_install { l("下载并安装") } else { l("打开下载页") };
+        alert.addButtonWithTitle(&NSString::from_str(&go));
         alert.addButtonWithTitle(&NSString::from_str(&l("稍后")));
         alert.addButtonWithTitle(&NSString::from_str(&l("跳过这个版本")));
         activate();
@@ -616,6 +662,7 @@ pub fn describe_error(detail: &str, long: bool) -> String {
 // MARK: Install
 
 #[derive(Debug)]
+#[cfg(not(feature = "mas"))]
 pub enum InstallError {
     Signature,
     Archive,
@@ -624,6 +671,7 @@ pub enum InstallError {
 }
 
 /// The download + verify + swap pipeline (`Updater.install`).
+#[cfg(not(feature = "mas"))]
 pub fn install(zip_url: String, version: String, page: String) {
     let Some(url) = NSURL::URLWithString(&NSString::from_str(&zip_url)) else { return };
     let window = crate::app::update_progress::Window::new(version.clone());
@@ -635,6 +683,7 @@ pub fn install(zip_url: String, version: String, page: String) {
     crate::app::update_progress::download(&url, window, move |result| move_to_worker(win_raw, result, version.clone(), page.clone()));
 }
 
+#[cfg(not(feature = "mas"))]
 fn move_to_worker(
     win_raw: usize,
     result: Result<PathBuf, crate::app::update_progress::DownloadError>,
@@ -671,6 +720,7 @@ fn move_to_worker(
 
 /// Re-download the release zip and swap again (the alert's 重试 path re-finds
 /// the URL through a fresh check, like Swift's recursive install).
+#[cfg(not(feature = "mas"))]
 fn retry_or_open_page(version: String, page: String, e: InstallError) {
     let mtm = MainThreadMarker::new().expect("main thread");
     let alert = NSAlert::new(mtm);
@@ -697,6 +747,7 @@ fn retry_or_open_page(version: String, page: String, e: InstallError) {
     }
 }
 
+#[cfg(not(feature = "mas"))]
 fn check_quiet_reinstall(version: String) {
     fetch_latest(move |outcome| {
         if let Ok(release) = outcome {
@@ -710,6 +761,7 @@ fn check_quiet_reinstall(version: String) {
 }
 
 /// After a successful swap: relaunch the app at the same bundle path.
+#[cfg(not(feature = "mas"))]
 fn relaunch() {
     let target = bundle_path();
     let url = NSURL::fileURLWithPath(&NSString::from_str(&target.to_string_lossy()));
@@ -730,6 +782,7 @@ fn relaunch() {
 }
 
 /// Off the main thread: unzip, verify the chain, then `replaceItemAt`.
+#[cfg(not(feature = "mas"))]
 fn verify_and_install(zip_file: &Path) -> Result<(), InstallError> {
     let work = std::env::temp_dir().join(format!(
         "pastory-update-{}",
@@ -819,6 +872,7 @@ fn verify_and_install(zip_file: &Path) -> Result<(), InstallError> {
 /// swap finishes otherwise).
 fn trash_placeholder_run_loop() {}
 
+#[cfg(not(feature = "mas"))]
 fn run_tool(tool: &str, args: &[&str]) -> Result<(), String> {
     let out = std::process::Command::new(tool)
         .args(args)

@@ -35,6 +35,7 @@ docs/                      本文件、RUST_REWRITE.md（Rust 重写记录）、
 ./build-rs.sh              # 本机架构，build/PasteJar.app（cargo 单 crate；Rust 工具链 stable 即可）
 ./dist.sh                  # arm64 + x86_64，签名、公证、盖章，dist/PasteJar-<版本>.zip 和 首次打开.txt（只换二进制来源）
 ./release.sh notes.md      # 先改 Resources/Info.plist 的 CFBundleShortVersionString 并提交，再跑
+./build-mas.sh             # 商店变体：--features mas（剥自更新链）+ 沙盒 entitlements；出可上传 pkg 需 Apple Distribution 证书 + PROVISION_PROFILE，见 MAS_PLAN §3
 ```
 
 只需要 Rust stable 和 Command Line Tools。没有 Developer ID 证书的机器上两个脚本自动退回 ad-hoc，`首次打开.txt` 会换成「仍要打开」版本。公证凭据是钥匙串 profile `pastory-notary`（`xcrun notarytool store-credentials`），仓库里没有任何密钥。发布包用 Developer ID 签名 + hardened runtime，`spctl --assess` 应显示 `source=Notarized Developer ID`。改 app 名/可执行名升级时，屏幕录制与辅助功能按路径记账，要重新勾选一次。

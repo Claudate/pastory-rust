@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Mac App Store variant (docs/MAS_PLAN.md §3). Direct builds keep the
+	     empty-dict Pastory.entitlements; this file is only ever applied by
+	     build-mas.sh. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Daily read-only update-feed check (the store build never downloads). -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Synthetic ⌘V for double-click-paste, like Paste/PopClip store builds;
+	     Apple routes these apps to the dedicated accessibility review — the
+	     submission notes must state the purpose (MAS_PLAN §5). -->
+	<key>com.apple.security.accessibility</key>
+	<true/>
+</dict>
+</plist>

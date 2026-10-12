@@ -49,6 +49,7 @@ pub mod delegate;
 pub mod spike;
 #[path = "App/updater.rs"]
 pub mod updater;
+#[cfg(not(feature = "mas"))]
 #[path = "App/update_progress.rs"]
 pub mod update_progress;
 #[path = "App/selftest_m6.rs"]

@@ -148,6 +148,7 @@ pub fn editors(out: &str) -> bool {
     ok
 }
 
+#[cfg(not(feature = "mas"))]
 /// `SelfTest.updatewin` — the progress panel at 1.9 / 4.86 MB (Swift:
 /// `UpdateProgressWindow(version:)` + `update(done:total:)` + frame 380×150).
 pub fn updatewin(out: &str) -> bool {
@@ -162,6 +163,7 @@ pub fn updatewin(out: &str) -> bool {
     selftest_m2::snapshot(&content, out)
 }
 
+#[cfg(not(feature = "mas"))]
 /// `SelfTest.download <url> [out]` — the downloader exercised for real.
 pub fn download(rest: &[String]) -> bool {
     let url_s = rest.first().map(String::as_str).unwrap_or("");
@@ -199,7 +201,7 @@ pub fn updater() -> bool {
             rel.notes.len()
         );
     }
-    let checks: Vec<(&str, bool)> = vec![
+    let mut checks: Vec<(&str, bool)> = vec![
         ("parses tag/notes/asset", r.as_ref().map(|rel| {
             rel.version == "1.2" && rel.zip_url.as_deref().and_then(|u| u.rsplit('/').next()) == Some("PasteJar-1.2.zip") && rel.notes.contains("HEIC")
         }).unwrap_or(false)),
@@ -233,14 +235,18 @@ pub fn updater() -> bool {
                 Err(_) => false,
             }
         }),
-        ("ad-hoc build must not self-install", {
-            // The dev build of this binary is ad-hoc-signed: it must never
-            // replace itself (Swift checks teamIdentifier==nil → canSelfInstall false).
+    ];
+    #[cfg(not(feature = "mas"))]
+    checks.push((
+        "ad-hoc build must not self-install",
+        // The dev build of this binary is ad-hoc-signed: it must never
+        // replace itself (Swift checks teamIdentifier==nil → canSelfInstall false).
+        {
             let bundle = crate::app::updater::bundle_path();
             let team = crate::app::updater::team_identifier(&bundle);
             team.is_none() && !crate::app::updater::can_self_install() || team.is_some()
-        }),
-    ];
+        },
+    ));
     let mut ok = true;
     for (name, good) in &checks {
         println!("{} {}", if *good { "ok  " } else { "FAIL" }, name);

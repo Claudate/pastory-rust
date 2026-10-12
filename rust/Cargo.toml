@@ -22,5 +22,11 @@ objc2-quartz-core = "0.3.2"
 objc2-core-image = "0.3.2"
 gif = "0.14.2"
 
+[features]
+# Mac App Store variant: the download + verify + self-replace chain is
+# compiled out entirely (Guideline 2.5.2 forbids installing executable code).
+# Update check stays: read-only feed → "打开 App Store". docs/MAS_PLAN.md §2-3.
+mas = []
+
 [profile.release]
 opt-level = 3

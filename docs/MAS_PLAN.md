@@ -120,9 +120,10 @@
 - [ ] （可选）`sha256` 快检进 `verify_and_install` 前置。
 
 **P3 · mas feature + 商店变体（1–2 天）**
-- [ ] `rust/Cargo.toml` 加 `mas = []`；updater/offer/安装链按 §2 分叉；`update_progress` 模块 cfg 隔离。
-- [ ] `Pastory-mas.entitlements` + `build-mas.sh` + 手动 CI job + pkg 冒烟（本机装 TestFlight）。
-- [ ] 验收：商店二进制 `nm`/strings 无 install/zip 通路；feed 检查 + 「打开 App Store」按钮可用。
+- [x] `rust/Cargo.toml` 加 `mas = []`；updater/offer/安装链按 §2 分叉（bundle_path/team_identifier/can_self_install/InstallError/install 链/update_progress 模块全 cfg）；feed 扩展键 `mas.store_url` → 商店版 offer「打开 App Store」。
+- [x] `Resources/Pastory-mas.entitlements`（app-sandbox + network.client + accessibility）+ `build-mas.sh`（bundle→provisioning→签名→productbuild；缺证书只出本地冒烟 .app）+ 手动 CI job（`release-mas.yml`，runner 无证书、产物 ad-hoc）。
+- [ ] pkg 冒烟（TestFlight）——**待 Apple Developer 账号证书 + provisioning profile + 自有 bundle id（后期轮）**。
+- [ ] 验收补充：strings 级安装链缺席随 P3 commit 验证；feed 检查 + 按钮行为待 P1 部署后真机过。
 
 **P4 · 沙盒真机回归（1–2 天，风险表见 §3）**
 - [ ] 全局点击收起、锁屏通知、导出目录记忆三项出结论并落地（降级/bookmark/重选）。

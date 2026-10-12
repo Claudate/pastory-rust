@@ -222,6 +222,7 @@ pub static PAIRS: &[(&str, &str)] = &[
     ("检查更新失败", "Update check failed"),
     ("暂无发布版本", "No release published yet"),
     ("PasteJar %@ 可以更新了（当前 %@）", "PasteJar %@ is available (you have %@)"),
+    ("打开 App Store", "Open App Store"),
     ("下载并安装", "Download and Install"),
     ("打开下载页", "Open Download Page"),
     ("跳过这个版本", "Skip This Version"),
