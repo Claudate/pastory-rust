@@ -218,6 +218,7 @@ fn run(cmd: &str, rest: &[String]) -> bool {
         "download" => crate::app::selftest_m6::download(rest),
         "updater" => crate::app::selftest_m6::updater(),
         "import" => crate::app::selftest_m6::import(rest),
+        "exportdir" => crate::app::selftest_m6::exportdir(),
         "openpanel" => crate::app::selftest_m6::openpanel(),
         // M3: real capture vs /usr/sbin/screencapture sampling.
         "capture" => crate::app::selftest_m3::capture(

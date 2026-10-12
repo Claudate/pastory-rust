@@ -160,37 +160,14 @@ impl Preferences {
         }
     }
 
-    /// ~/Downloads unless overridden. Created on demand.
+    /// The remembered folder as a plain path, for the settings pane to print.
+    /// The sandbox grant behind it lives in the security-scoped bookmark —
+    /// `set_custom_export_dir`/`export_directory` are in
+    /// `preferences_export.rs`.
     pub fn custom_export_dir(&self) -> Option<String> {
         self.defaults()
             .stringForKey(ns_string_id("exportDir"))
             .map(|s| s.to_string())
-    }
-
-    pub fn set_custom_export_dir(&self, v: Option<&str>) {
-        match v {
-            Some(s) if !s.is_empty() => unsafe {
-                self.defaults().setObject_forKey(
-                    Some(&*objc2_foundation::NSString::from_str(s)),
-                    ns_string_id("exportDir"),
-                );
-            },
-            _ => self.defaults().removeObjectForKey(ns_string_id("exportDir")),
-        }
-    }
-
-    pub fn export_directory(&self) -> std::path::PathBuf {
-        let dir = match self.custom_export_dir() {
-            Some(p) if !p.is_empty() => std::path::PathBuf::from(p),
-            _ => {
-                let home = std::env::var_os("HOME").expect("HOME");
-                std::path::PathBuf::from(home).join("Downloads")
-            }
-        };
-        if !dir.exists() {
-            let _ = std::fs::create_dir_all(&dir);
-        }
-        dir
     }
 
     pub fn set_record_password_managers(&self, v: bool) {

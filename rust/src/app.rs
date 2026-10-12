@@ -19,6 +19,8 @@ pub mod preferences;
 pub mod preferences_m1;
 #[path = "App/preferences_m6.rs"]
 pub mod preferences_m6;
+#[path = "App/preferences_export.rs"]
+pub mod preferences_export;
 #[path = "App/selftest.rs"]
 pub mod selftest;
 #[path = "App/selftest_m1.rs"]

@@ -103,10 +103,10 @@
 ## 4. 分阶段清单
 
 **P0 · 地基（0.5 天，先独立入库）**
-- [ ] 把工作区未提交的全局改名 diff（Pastory → Pastory Rust，strings + selftest_m2/m4/m6 同步）单独成 commit。
-- [ ] 抽 `BRAND` 常量（新 `rust/src/App/brand.rs` 或 theme.rs 顶部），收掉散落的字面量：`updater.rs::REPO`、User-Agent `Pastory-Rust/`、`exporter.rs` 文件名前缀 `Pastory {…}.png`（用户桌面可见，必换）、`selection_overlay.rs` TopBar `l_nonl8("Pastory")` + `text_width("Pastory")`、`delegate.rs` 状态项 accessibility description、`release.sh` 文案。
+- [x] 全局改名 diff（Pastory → Pastory Rust，strings + selftest_m2/m4/m6 同步）独立成 commit（`d48470c`）；商店品牌名 PasteJar 随后另起一 commit（`d44782e`）。
+- [x] `rust/src/App/brand.rs` 收口 `BRAND` + `LEGACY_BRANDS`（后者只用于匹配旧更新日志标题）。散落字面量已收：`exporter.rs` 导出文件名前缀 `{BRAND} {stamp}.png`（桌面可见）、`updater.rs` 两级请求 UA `{BRAND}/{version}`、`selection_overlay.rs` 顶栏、`welcome_card.rs`、`delegate.rs` 辅助功能描述、`REPO` 与 `release.sh` 文案（2026-10-12 完成，commit `brand: route remaining name literals through brand::BRAND`）。仅剩 `localization.rs` 的 5 条用户可见串仍写死「PasteJar」——那是 l10n 键的原面，改名时需连 `.l` 调用与 PAIRS 一起走，属 P5 换皮轨道。
 - [x] 发布源已切 Claudate/pastory-rust（updater::REPO、contact_pane REPO_URL、release.sh，含修复 release.sh 一直指错 dist/Pastory-*.zip 的陈旧路径；X_URL 与微信/咖啡处置并入改名轮）
-- [ ] `cargo build` + 双语 shelf/annotate/ocrpanel 渲染自测过。
+- [x] `cargo build` + 双语 shelf/annotate/ocrpanel 渲染自测过；双 feature 零告警。
 
 **P1 · Cloudflare feed + 客户端两级取源（1–2 天）**
 - [x] `cloudflare/worker/`：`fetch` 路由 `/v1/releases/latest`、`/files/*`；`wrangler.jsonc`（KV namespace RELEASES、R2 bucket pastory-releases、自有域名路由）。Worker 不写 GitHub 回源逻辑。（代码已落地；**部署待 Cloudflare 账号 + 自有域名**）
@@ -127,8 +127,9 @@
 - [ ] 验收补充：strings 级安装链缺席随 P3 commit 验证；feed 检查 + 按钮行为待 P1 部署后真机过。
 
 **P4 · 沙盒真机回归（1–2 天，风险表见 §3）**
-- [ ] 全局点击收起、锁屏通知、导出目录记忆三项出结论并落地（降级/bookmark/重选）。
-- [ ] 双语 `--selftest shelf` 全面板目测（沙盒下渲染与非沙盒一致性）。
+- [x] 导出目录记忆：改存 security-scoped bookmark（`App/preferences_export.rs`），创建与解析都先试带 scope、非沙盒进程以 `NSCocoaErrorDomain 256` 拒绝时退普通 bookmark——直发版行为不变，沙盒版跨启动可写。不可用的旧记忆退回 ~/Downloads 并忘掉。`--selftest exportdir` 3 项过。
+- [ ] 全局点击收起（`panel.rs::install_outside_monitor` 的 `addGlobalMonitorForEventsMatchingMask`）与锁屏通知（`monitor.rs`）在沙盒内是否成立——**待 pkg 真机**；不成立则降级为失焦关闭 + ⎋（已有 `windowDidResignKey` 路径）。
+- [ ] 双语 `--selftest shelf` 全面板目测（沙盒下渲染与非沙盒一致性）——待 pkg 真机。
 - [ ] 辅助功能授权流（合成 ⌘V 双击粘贴）+ 屏幕录制首启流在 pkg 安装形态下走通——MAS 的 TCC 条目随容器路径，重新验证一遍。
 
 **P5 · 换皮与提交（独立轨道，定位拍板后启动）**

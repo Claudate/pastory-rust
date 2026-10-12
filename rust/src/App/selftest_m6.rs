@@ -10,7 +10,7 @@
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSBackingStoreType, NSOpenPanel, NSWindow, NSWindowStyleMask};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_foundation::{NSDate, NSRunLoop, NSString, NSURL};
+use objc2_foundation::{NSData, NSDate, NSRunLoop, NSString, NSURL};
 
 use crate::app::{sandbox, selftest_m2};
 use crate::clipboard::item::ClipKind;
@@ -266,6 +266,62 @@ pub fn updater() -> bool {
             team.is_none() && !crate::app::updater::can_self_install() || team.is_some()
         },
     ));
+    let mut ok = true;
+    for (name, good) in &checks {
+        println!("{} {}", if *good { "ok  " } else { "FAIL" }, name);
+        ok &= *good;
+    }
+    ok
+}
+
+/// `--selftest exportdir` — the remembered 「保存到本地」 folder.
+///
+/// Under the sandbox the grant does not survive a launch, so the memory is a
+/// security-scoped bookmark (docs/MAS_PLAN.md §3): it must round-trip, the
+/// plain path must stay readable for the settings pane, and a memory this
+/// launch cannot use must be dropped rather than block the next save.
+pub fn exportdir() -> bool {
+    use crate::app::preferences::{ns_string_id, Preferences};
+
+    let prefs = Preferences::shared();
+    let tmp = std::env::temp_dir().join(format!("pastejar-exportdir-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    // The bookmark hands back the real path, and /var is a symlink to
+    // /private/var — normalise before comparing, or the test fails on macOS's
+    // own plumbing rather than on the code.
+    let tmp = std::fs::canonicalize(&tmp).expect("canonicalize scratch dir");
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&tmp.to_string_lossy()));
+
+    prefs.set_custom_export_dir(&url);
+    let path_shown = prefs.custom_export_dir().as_deref() == Some(&*tmp.to_string_lossy());
+    // Drop the plain path: what comes back now can only be the bookmark.
+    prefs.defaults().removeObjectForKey(ns_string_id("exportDir"));
+    let via_bookmark = prefs.export_directory() == tmp;
+
+    // A blob that cannot be resolved (a folder on a volume that is gone) must
+    // fall back to ~/Downloads and forget it, never keep handing it back.
+    unsafe {
+        prefs.defaults().setObject_forKey(
+            Some(&*NSData::with_bytes(b"not a bookmark")),
+            ns_string_id("exportDirBookmark"),
+        );
+    }
+    crate::app::preferences_export::forget_open_export_dir();
+    let fallback = prefs.export_directory();
+    let home = std::env::var_os("HOME").expect("HOME");
+    let downloads = std::path::PathBuf::from(home).join("Downloads");
+    let reset = fallback == downloads && prefs.custom_export_dir().is_none();
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    prefs.defaults().removeObjectForKey(ns_string_id("exportDirBookmark"));
+    prefs.defaults().removeObjectForKey(ns_string_id("exportDir"));
+    crate::app::preferences_export::forget_open_export_dir();
+
+    let checks: [(&str, bool); 3] = [
+        ("bookmark: plain path kept for the pane", path_shown),
+        ("bookmark: resolves after the path key is gone", via_bookmark),
+        ("bookmark: unusable memory reset to ~/Downloads", reset),
+    ];
     let mut ok = true;
     for (name, good) in &checks {
         println!("{} {}", if *good { "ok  " } else { "FAIL" }, name);

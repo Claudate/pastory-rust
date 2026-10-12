@@ -980,8 +980,8 @@ fn run_choice(choice: Choice, view: &SettingsView) {
                 panel.setPrompt(Some(&NSString::from_str(&l("选择"))));
                 if panel.runModal() == objc2_app_kit::NSModalResponseOK {
                     if let Some(url) = panel.URL() {
-                        if let Some(path) = url.path() {
-                            preferences::Preferences::shared().set_custom_export_dir(Some(&path.to_string()));
+                        if url.path().is_some() {
+                            preferences::Preferences::shared().set_custom_export_dir(&url);
                         }
                     }
                 }

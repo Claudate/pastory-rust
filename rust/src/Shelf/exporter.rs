@@ -54,9 +54,11 @@ fn run(item: &ClipItem) {
             let Some(path) = url.path().map(|p| p.to_string()) else { return };
             let out = std::path::PathBuf::from(path);
             if write_payload(item, &out) {
-                Preferences::shared().set_custom_export_dir(Some(
-                    &out.parent().map(|p| p.to_string_lossy()).unwrap_or_default(),
-                ));
+                if let Some(dir) = out.parent() {
+                    let dir_url =
+                        NSURL::fileURLWithPath(&NSString::from_str(&dir.to_string_lossy()));
+                    Preferences::shared().set_custom_export_dir(&dir_url);
+                }
                 reveal(&[out]);
             } else {
                 unsafe {
@@ -108,7 +110,7 @@ fn run(item: &ClipItem) {
                     }
                 }
             });
-            Preferences::shared().set_custom_export_dir(Some(&dir.to_string_lossy()));
+            Preferences::shared().set_custom_export_dir(&url);
             if !out.is_empty() {
                 reveal(&out);
             }
