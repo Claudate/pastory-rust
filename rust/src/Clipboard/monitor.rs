@@ -144,7 +144,7 @@ pub fn ingest(pb: &NSPasteboard) -> Option<ClipItem> {
         .types()
         .map(|t| t.iter().map(|s| s.to_string()).collect())
         .unwrap_or_default();
-    // 1. Our own marker: a Pastory copy went back on the board → bump.
+    // 1. Our own marker: a PasteJar copy went back on the board → bump.
     if types.iter().any(|t| t == "com.cici.snipclip.marker") {
         if let Some(id) = pb.stringForType(pasteboard_writer::marker()) {
             store::with(|st| st.bump(&id.to_string()));

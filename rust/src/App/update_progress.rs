@@ -173,7 +173,7 @@ impl Window {
 
         let w = rect.size.width;
         let h = rect.size.height;
-        let title_field = label(&l("正在下载 Pastory %@…").replacen("%@", &version, 1), true, true);
+        let title_field = label(&l("正在下载 PasteJar %@…").replacen("%@", &version, 1), true, true);
         let detail_field = label(&l("正在连接 GitHub…"), false, false);
         let track_view: Retained<ProgressTrack> = {
             let t = mtm.alloc::<ProgressTrack>().set_ivars(ProgressTrackIvars {

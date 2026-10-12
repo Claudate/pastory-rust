@@ -248,7 +248,7 @@ fn picked(target: Option<CaptureTarget>) {
         return;
     }
     // No frozen shot of this display: take one now, leaving out exactly the
-    // mask windows (other Pastory windows, the shelf included, stay in).
+    // mask windows (other PasteJar windows, the shelf included, stay in).
     let screen = c
         .snapshot
         .borrow()

@@ -9,6 +9,8 @@
 
 #[path = "App/sandbox.rs"]
 pub mod sandbox;
+#[path = "App/brand.rs"]
+pub mod brand;
 #[path = "App/localization.rs"]
 pub mod localization;
 #[path = "App/preferences.rs"]

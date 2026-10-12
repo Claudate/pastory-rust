@@ -860,7 +860,7 @@ impl TopBar {
         theme::paper_sheet(&bar, 6.0);
 
         let font_name = theme::brand_font(19.0);
-        let name_w = text_width("Pastory", &font_name).ceil();
+        let name_w = text_width(crate::app::brand::BRAND, &font_name).ceil();
         let seg_font = theme::serif(14.0, true);
         let widest = text_width(&l("截屏"), &seg_font)
             .max(text_width(&l("录屏"), &seg_font));
@@ -870,7 +870,7 @@ impl TopBar {
         let h = 52.0;
         bar.setFrame(CGRect::new(CGPoint::ZERO, CGSize::new(total_w, h)));
 
-        // [logo] Pastory
+        // [logo] PasteJar
         if let Some(logo_img) = theme::logo() {
             let logo_view = objc2_app_kit::NSImageView::new(mtm);
             logo_view.setImage(Some(&logo_img));
@@ -878,7 +878,7 @@ impl TopBar {
             logo_view.setFrame(CGRect::new(CGPoint::new(18.0, (h - 30.0) / 2.0), CGSize::new(30.0, 30.0)));
             bar.addSubview(&logo_view);
         }
-        let name = make_label(&l_nonl8("Pastory"));
+        let name = make_label(&l_nonl8(crate::app::brand::BRAND));
         name.setFont(Some(&font_name));
         name.setTextColor(Some(&theme::on_brown()));
         let name_h = crate::shelf::card::line_height(&font_name);

@@ -123,8 +123,10 @@ fn draw(view: &ContactView) {
     header_button(view, CGRect::new(CGPoint::new(cx + cw - 200.0, 18.0), CGSize::new(160.0, 36.0)), &format!("‹ {}", l("返回剪贴板")), Link::Back, true);
     header_button(view, CGRect::new(CGPoint::new(cx + cw - 40.0, 18.0), CGSize::new(40.0, 36.0)), "✕", Link::Close, false);
     let top = 18.0 + 44.0 + 14.0;
+    // TODO(mas 提审): 上架 Mac App Store 前，微信 / X / 买咖啡三格必须替换为自有渠道
+    // 或经 `mas` cfg 隐藏（见 docs/MAS_PLAN.md §0）；GitHub 格已是自有仓库。
     let mut x = cx;
-    sheet(view, x, top, &l("反馈 bug & 提功能"), &l("Pastory 微信小小群，交个朋友"), SheetArt::Qr(theme::resource_named("WeChatGroup.png")));
+    sheet(view, x, top, &l("反馈 bug & 提功能"), &l("PasteJar 微信小小群，交个朋友"), SheetArt::Qr(theme::resource_named("WeChatGroup.png")));
     x += 246.0;
     sheet(view, x, top, &l("GitHub 点个 Star 吧"), &l("开源产品，喜欢就请助力一下"), SheetArt::Link("Claudate/pastory-rust", Link::Repo));
     x += 246.0;

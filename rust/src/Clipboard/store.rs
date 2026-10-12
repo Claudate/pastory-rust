@@ -66,7 +66,7 @@ impl Source {
     pub fn pastory() -> Source {
         Source {
             bundle_id: Some("com.cici.snipclip".into()),
-            name: Some("Pastory".into()),
+            name: Some(crate::app::brand::BRAND.into()),
         }
     }
 
@@ -369,14 +369,14 @@ impl ClipStore {
             let app = NSApplication::sharedApplication(mtm);
             let alert = NSAlert::new(mtm);
             alert.setMessageText(&NSString::from_str(&crate::app::localization::l(
-                "Pastory 读写不了存储目录",
+                "PasteJar 读写不了存储目录",
             )));
             let detail = format!(
                 "{}\n\n{}\n\n{}",
                 path,
                 msg,
                 crate::app::localization::l(
-                    "在修好之前不会写入任何改动，也不会清理。检查磁盘空间后重新打开 Pastory。"
+                    "在修好之前不会写入任何改动，也不会清理。检查磁盘空间后重新打开 PasteJar。"
                 )
             );
             alert.setInformativeText(&NSString::from_str(&detail));
@@ -803,7 +803,7 @@ impl ClipStore {
 
     /// Bulk insert from another store. Skips anything whose payload is already
     /// here (or repeated in the batch) and saves once. Imported history always
-    /// sorts behind everything Pastory captured itself: the batch keeps its own
+    /// sorts behind everything PasteJar captured itself: the batch keeps its own
     /// internal order, shifted back so its newest entry is older than our
     /// oldest item. Returns how many were added.
     pub fn import_entries(&mut self, entries: Vec<ImportEntry>) -> usize {

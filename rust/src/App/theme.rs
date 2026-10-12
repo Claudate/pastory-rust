@@ -35,7 +35,7 @@ use objc2_core_graphics::{
 use objc2_foundation::{ns_string, NSArray, NSDictionary, NSString};
 
 /// Where resources live. A normal launch: the bundle's Resources. A dev run /
-/// self-test (`cargo run`, the bare binary): `<repo>/rust/target/…/Pastory`
+/// self-test (`cargo run`, the bare binary): `<repo>/rust/target/…/pastory`
 /// three levels under `rust/target`, so fall back to the repo's `Resources/`.
 fn dev_resources() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
@@ -51,7 +51,7 @@ fn dev_resources() -> Option<PathBuf> {
 
 fn bundle_resources() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let bundle = exe.ancestors().nth(3)?; // …/Pastory-Rust.app/Contents/MacOS/Pastory-Rust
+    let bundle = exe.ancestors().nth(3)?; // …/PasteJar.app/Contents/MacOS/PasteJar
     if bundle.file_name()?.to_str()? == "Contents" {
         return Some(bundle.join("Resources"));
     }

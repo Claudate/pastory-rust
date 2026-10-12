@@ -40,12 +40,12 @@ fi
 
 # Bundle folder / display name, and the executable's file name. Rust is the
 # only live port now (Swift 版已冻结归档), so the app ships as
-# "Pastory-Rust.app" / executable "Pastory-Rust" / display name "Pastory Rust"
+# "PasteJar.app" / executable "PasteJar" / display name "PasteJar"
 # (bundle id — and therefore TCC — is unchanged).
-APP="../build/${APP_FOLDER:-Pastory-Rust}.app"
+APP="../build/${APP_FOLDER:-PasteJar}.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/Pastory-Rust"
+cp "$BIN" "$APP/Contents/MacOS/PasteJar"
 cp "$REPO/Resources/Info.plist" "$APP/Contents/Info.plist"
 if [ -n "${APP_TITLE:-}" ]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_TITLE}" "$APP/Contents/Info.plist"

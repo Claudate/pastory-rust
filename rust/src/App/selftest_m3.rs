@@ -131,7 +131,7 @@ fn compare(a: &CGImage, b: &CGImage, label: &str) {
 pub fn capture(out: &str) -> bool {
     if !permissions::has_screen_recording() {
         // Same words as the Swift test, plus the §5.5 first-capture request:
-        // on a machine that has never granted the bundle, this puts Pastory
+        // on a machine that has never granted the bundle, this puts PasteJar
         // into the System Settings list; grant it, then re-run. The run
         // waits up to 60 s for the toggle so an in-person grant flips this
         // very invocation.

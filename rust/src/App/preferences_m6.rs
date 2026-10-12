@@ -57,7 +57,7 @@ impl Preferences {
         self.defaults().setBool_forKey(v, ns_string_id("didWelcome"));
     }
 
-    /// The 「Pastory 怎么用」 card has been seeded once.
+    /// The 「PasteJar 怎么用」 card has been seeded once.
     pub fn did_seed_how_to(&self) -> bool {
         self.defaults().boolForKey(ns_string_id("didSeedHowTo"))
     }

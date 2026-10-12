@@ -1,4 +1,4 @@
-# Pastory × AI 编程助手
+# PasteJar × AI 编程助手
 
 > 给使用者：怎么让 Claude Code、Cursor、Codex 用上你已经复制过的东西。
 > 给以后的自己：如果要做 MCP / CLI，接口该长什么样。
@@ -11,14 +11,14 @@
 
 ## 为什么值得结合
 
-AI 编程助手的上下文是一次性的。你真正反复用的东西——能跑的 prompt、昨天的报错栈、一张 UI 参考、客户地址——几乎都先经过剪贴板。Pastory 已经在本机记下这些，截图还带 OCR。缺的只是一条助手读它的路。
+AI 编程助手的上下文是一次性的。你真正反复用的东西——能跑的 prompt、昨天的报错栈、一张 UI 参考、客户地址——几乎都先经过剪贴板。PasteJar 已经在本机记下这些，截图还带 OCR。缺的只是一条助手读它的路。
 
 同类产品已经在走：
 
 - [Paste](https://pasteapp.io) 从 6.6 起内置 MCP（`npx add-mcp @pasteapp/mcp`）
 - [Maccy](https://github.com/vlad-ds/maccy-clipboard-mcp) / [Maus](https://github.com/mnlt/maus-mcp) 有社区 MCP，读各自的本地 SQLite
 
-Pastory 的存储比它们更透明：不加密、不沙盒、路径固定、schema 小。所以 **今天用 `sqlite3` 就能接**，不必等官方 MCP。
+PasteJar 的存储比它们更透明：不加密、不沙盒、路径固定、schema 小。所以 **今天用 `sqlite3` 就能接**，不必等官方 MCP。
 
 适合交给助手的，是你已经 Pin、起过标题、或刚刚复制的内容。不适合的是整库无过滤地倒进模型——里面可能有 token、cookie、聊天记录。
 
@@ -26,7 +26,7 @@ Pastory 的存储比它们更透明：不加密、不沙盒、路径固定、sch
 
 ## 今天就能用（零改代码）
 
-Pastory 运行时用 WAL 写索引；另一个进程用只读打开即可，不必退出 app。`busy_timeout` 是 3 秒。
+PasteJar 运行时用 WAL 写索引；另一个进程用只读打开即可，不必退出 app。`busy_timeout` 是 3 秒。
 
 ```
 ~/Library/Application Support/Pastory/
@@ -119,7 +119,7 @@ sqlite3 -header "$DB" "
 "
 ```
 
-图片默认是 HEIC。给模型看之前转成 PNG（Pastory 自己导出也永远是 PNG）：
+图片默认是 HEIC。给模型看之前转成 PNG（PasteJar 自己导出也永远是 PNG）：
 
 ```bash
 sips -s format png "$HOME/Library/Application Support/Pastory/items/$ID.heic" --out /tmp/pastory-$ID.png
@@ -148,7 +148,7 @@ sips -s format png "$HOME/Library/Application Support/Pastory/items/$ID.heic" --
 
 ### 1. 能跑的 Prompt，下次还在
 
-复制那一刻就进 Pastory。给它起标题（「翻译 prompt」「PR 描述」），Pin 住。下次在 Cursor / Claude Code 里说「把我 Pin 的翻译 prompt 拿来」，助手查库即可。不必再翻是哪个 session、第几十轮。
+复制那一刻就进 PasteJar。给它起标题（「翻译 prompt」「PR 描述」），Pin 住。下次在 Cursor / Claude Code 里说「把我 Pin 的翻译 prompt 拿来」，助手查库即可。不必再翻是哪个 session、第几十轮。
 
 ### 2. 报错截图 → 可搜索的字
 
@@ -184,13 +184,13 @@ sqlite3 "$DB" "
 | --- | --- | --- |
 | L0 | 本文：文档 + `sqlite3` 只读 | 现在 |
 | L1 | 只读 MCP：`search` / `recent` / `get` / `pinned` | Claude Code、Cursor、Codex、Claude Desktop |
-| L2 | 用户 CLI：`pastory search` `get` `copy` | 任何会 shell 的助手；也方便人 |
+| L2 | 用户 CLI：`pastejar search` `get` `copy` | 任何会 shell 的助手；也方便人 |
 | L3 | 写入：`add --text` / `pin` / `title`（走运行中的 app，或复用 ClipStore） | 助手把结果存回历史，不必只靠系统剪贴板 |
-| L4 | `pastory://search?q=` 、App Intents / Shortcuts | Alfred、系统快捷指令 |
+| L4 | `pastejar://search?q=` 、App Intents / Shortcuts | Alfred、系统快捷指令 |
 
 ### L1 MCP 草案
 
-进程：独立小服务，**只读**打开 `pastory.sqlite`（`SQLITE_OPEN_READONLY`），需要正文时读 `items/<id>.txt`，需要图时解码成 PNG 再给。不要链进 Pastory-Rust.app 的 MainActor。
+进程：独立小服务，**只读**打开 `pastory.sqlite`（`SQLITE_OPEN_READONLY`），需要正文时读 `items/<id>.txt`，需要图时解码成 PNG 再给。不要链进 PasteJar.app 的 MainActor。
 
 建议的 tools（名称稳定，宁可少）：
 
@@ -215,8 +215,8 @@ Claude Code 用户级配置将来会是这种形状（现在还没有这个 serv
 ```json
 {
   "mcpServers": {
-    "pastory": {
-      "command": "pastory-mcp",
+    "pastejar": {
+      "command": "pastejar-mcp",
       "args": ["--readonly"]
     }
   }
@@ -228,34 +228,34 @@ Cursor 同理，写在 `~/.cursor/mcp.json`。
 ### L2 CLI 草案
 
 ```
-pastory search "翻译 prompt"
-pastory get <id>
-pastory copy <id>
-pastory pinned
+pastejar search "翻译 prompt"
+pastejar get <id>
+pastejar copy <id>
+pastejar pinned
 ```
 
 实现上有两条路：
 
 1. **旁路只读**（和 MCP 一样直接打开 SQLite）。简单，搜索与面板 100% 一致做不到（面板还搜 txt 全文，且有过滤胶囊）。
-2. **问正在运行的 Pastory**（XPC / unix socket）。搜索一致，但 app 没开就失败。
+2. **问正在运行的 PasteJar**（XPC / unix socket）。搜索一致，但 app 没开就失败。
 
 建议 L1/L2 都走旁路只读；L3 写入再考虑 socket，避免第二个进程写 WAL。
 
 ### 不要做的
 
 - 不要改 bundle id `com.cici.snipclip`。
-- 不要在助手侧再做一套「剪贴板监听」——Pastory 已经在听，再听一份会把密码管理器跳过、锁屏、暂停搞丢。
+- 不要在助手侧再做一套「剪贴板监听」——PasteJar 已经在听，再听一份会把密码管理器跳过、锁屏、暂停搞丢。
 - 不要把 HID 级按键注入当「粘贴 API」。双击粘贴只走 session 级 `CGEvent`，HID 曾经让 Command 整机卡住。
 - 不要用 `--selftest` 当用户 API。它只在 `PASTORY_STORE` 指向临时目录时才允许写库，正常启动会忽略这些环境变量。
 
 ---
 
-## 和「改 Pastory 源码的助手」的区别
+## 和「改 PasteJar 源码的助手」的区别
 
-| | 用 Pastory 当记忆 | 在本仓库里改代码 |
+| | 用 PasteJar 当记忆 | 在本仓库里改代码 |
 | --- | --- | --- |
 | 读什么 | `~/Library/Application Support/Pastory/` | `Sources/`、`docs/DEVELOPMENT.md` |
 | 给助手的说明书 | 本文 + 你全局规则里的那小段 | 仓库根目录 [CLAUDE.md](../CLAUDE.md) |
 | 会不会碰到用户数据 | 会，只读、要过滤 | 自测必须 `PASTORY_STORE=/tmp/...`，碰不到真库 |
 
-两件事可以同时成立：你用 Claude Code 写代码，同时让它在需要旧 prompt / 报错原文时查 Pastory。
+两件事可以同时成立：你用 Claude Code 写代码，同时让它在需要旧 prompt / 报错原文时查 PasteJar。

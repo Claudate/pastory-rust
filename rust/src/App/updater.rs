@@ -1,5 +1,5 @@
 //! Port of `App/Updater.swift` — GitHub Releases check, once a day and on
-//! demand. The only network request Pastory ever makes; it carries no
+//! demand. The only network request PasteJar ever makes; it carries no
 //! identifier (settings can turn it off).
 //!
 //! Networking runs through NSURLSession (objc2-foundation), matching the
@@ -82,7 +82,7 @@ pub fn is_newer(a: &str, than_b: &str) -> bool {
 
 /// Release notes are Markdown with the Chinese half first and the English
 /// half after a `---` line. Pick the half for the UI language, drop the
-/// "Pastory Rust x.y" title line the alert already carries, turn bold/headings/
+/// "PasteJar x.y" title line the alert already carries, turn bold/headings/
 /// list dashes into plain text and bullets, and cap the length.
 pub fn notes_for_display(raw: &str, version: &str, english: bool) -> String {
     let halves: Vec<&str> = raw.split("\n---\n").collect();
@@ -98,7 +98,17 @@ pub fn notes_for_display(raw: &str, version: &str, english: bool) -> String {
     let mut lines: Vec<String> = Vec::new();
     for line in text.split('\n') {
         let mut trimmed = line.trim().to_string();
-        if trimmed == format!("Pastory Rust {version}") || trimmed == "---" {
+        let mut drop_line = trimmed == "---";
+        for b in [crate::app::brand::BRAND]
+            .into_iter()
+            .chain(crate::app::brand::LEGACY_BRANDS.iter().copied())
+        {
+            if trimmed == format!("{b} {version}") {
+                drop_line = true;
+                break;
+            }
+        }
+        if drop_line {
             continue;
         }
         trimmed = trimmed.replace("**", "");
@@ -143,13 +153,16 @@ mod tests {
 
     #[test]
     fn notes_half_strip() {
-        let raw = "Pastory Rust 1.2\n\n**新功能**\n- 一\n- 二\n\n---\n\nPastory Rust 1.2\n\n**New**\n- one";
+        let raw = "PasteJar 1.2\n\n**新功能**\n- 一\n- 二\n\n---\n\nPasteJar 1.2\n\n**New**\n- one";
         let zh = notes_for_display(raw, "1.2", false);
         assert_eq!(zh, "新功能\n•  一\n•  二");
         let en = notes_for_display("中文\n---\n**New**\n- one", "1.2", true);
         assert_eq!(en, "New\n•  one");
         let no_div = notes_for_display("- a\n- b", "1.2", true);
         assert_eq!(no_div, "•  a\n•  b");
+        // Legacy-brand title lines (upstream / transition notes) strip too.
+        assert_eq!(notes_for_display("Pastory Rust 1.3\n\n- old", "1.3", false), "•  old");
+        assert_eq!(notes_for_display("Pastory 1.4\n\n- older", "1.4", true), "•  older");
     }
 }
 
@@ -327,7 +340,7 @@ pub fn check_with(interactive: bool, quiet: bool, done: impl FnOnce(Outcome) + S
                     if interactive && !quiet {
                         info(
                             &l("已经是最新版本"),
-                            &l("Pastory Rust %@").replacen("%@", &current_version(), 1),
+                            &l("PasteJar %@").replacen("%@", &current_version(), 1),
                         );
                     }
                     done(Outcome::UpToDate);
@@ -372,7 +385,7 @@ pub fn fetch_latest(done: impl FnOnce(Result<Release, String>) + Send + 'static)
     unsafe {
         // SAFETY: NSString header values on the standard request interface.
         let accept = NSString::from_str("application/vnd.github+json");
-        let ua = NSString::from_str(&format!("Pastory-Rust/{}", current_version()));
+        let ua = NSString::from_str(&format!("PasteJar/{}", current_version()));
         let k1 = NSString::from_str("Accept");
         let k2 = NSString::from_str("User-Agent");
         let _: () = msg_send![&*req, setValue: &*accept, forHTTPHeaderField: &*k1];
@@ -423,7 +436,7 @@ fn offer(r: Release) {
         let mtm = MainThreadMarker::new().expect("main thread");
         let alert = NSAlert::new(mtm);
         alert.setMessageText(&NSString::from_str(
-            &l("Pastory Rust %@ 可以更新了（当前 %@）")
+            &l("PasteJar %@ 可以更新了（当前 %@）")
                 .replacen("%@", &r.version, 1)
                 .replacen("%@", &current_version(), 1),
         ));

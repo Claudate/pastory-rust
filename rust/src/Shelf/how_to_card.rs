@@ -1,4 +1,4 @@
-//! Port of `Shelf/HowToCard.swift` — 「Pastory 怎么用」: an ordinary pinned
+//! Port of `Shelf/HowToCard.swift` — 「PasteJar 怎么用」: an ordinary pinned
 //! text card with the short manual, seeded once for every user (new or
 //! upgrading). It behaves like any other card: searchable, editable, and
 //! gone for good once deleted.
@@ -7,9 +7,9 @@ use crate::app::localization::is_english;
 use crate::app::preferences::Preferences;
 use crate::clipboard::store::{self, Source};
 
-pub const VERSION: i64 = 2;
-pub const TITLE_ZH: &str = "Pastory 怎么用";
-pub const TITLE_EN: &str = "How to use Pastory";
+pub const VERSION: i64 = 3;
+pub const TITLE_ZH: &str = "PasteJar 怎么用";
+pub const TITLE_EN: &str = "How to use PasteJar";
 
 pub fn seed_if_needed() {
     let p = Preferences::shared();
@@ -43,13 +43,21 @@ pub fn seed_if_needed() {
             s.items
                 .iter()
                 .find(|it| {
-                    (it.title.as_deref() == Some(TITLE_ZH) || it.title.as_deref() == Some(TITLE_EN))
-                        && it.source_app_name.as_deref() == Source::pastory().name.as_deref()
+                    (it.title.as_deref() == Some(TITLE_ZH)
+                        || it.title.as_deref() == Some(TITLE_EN)
+                        // Rows seeded before the PasteJar rename carry the old titles/sources.
+                        || it.title.as_deref() == Some("Pastory 怎么用")
+                        || it.title.as_deref() == Some("How to use Pastory"))
+                        && (it.source_app_name.as_deref() == Source::pastory().name.as_deref()
+                            || it.source_app_name.as_deref() == Some("Pastory"))
                 })
                 .map(|it| it.id.clone())
         });
         if let Some(id) = old {
-            store::with(|s| s.update_text(&id, text));
+            store::with(|s| {
+                s.update_text(&id, text);
+                s.set_title(Some(if is_english() { TITLE_EN } else { TITLE_ZH }), &id);
+            });
         }
     }
     p.set_how_to_version(VERSION);

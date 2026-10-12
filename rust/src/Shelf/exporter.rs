@@ -32,7 +32,7 @@ fn run(item: &ClipItem) {
             panel.setCanCreateDirectories(true);
             panel.setExtensionHidden(false);
             let (name, uti) = match item.kind {
-                ClipKind::Image => (format!("Pastory {}.png", stamp(item)), "public.png"),
+                ClipKind::Image => (format!("PasteJar {}.png", stamp(item)), "public.png"),
                 ClipKind::Video => (
                     format!("Rec {}.{}", stamp(item), item.ext),
                     if item.ext == "gif" { "com.compuserve.gif" } else { "public.mpeg-4" },

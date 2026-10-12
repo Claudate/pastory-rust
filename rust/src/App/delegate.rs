@@ -170,9 +170,10 @@ impl AppDelegate {
                 Some(icon) => button.setImage(Some(&icon)),
                 None => {
                     // Fallback, as in the Swift version.
+                    let brand_name = objc2_foundation::NSString::from_str(crate::app::brand::BRAND);
                     let symbol = objc2_app_kit::NSImage::imageWithSystemSymbolName_accessibilityDescription(
                         ns_string!("scissors"),
-                        Some(ns_string!("Pastory")),
+                        Some(&brand_name),
                     );
                     match symbol {
                         Some(img) => button.setImage(Some(&img)),
@@ -298,7 +299,7 @@ impl AppDelegate {
             let _: () = msg_send![&*settings, setTarget: target];
             let _: () = msg_send![&*settings, setAction: Some(sel!(menuSettings:))];
             settings.setKeyEquivalent(ns_string!(","));
-            let quit = add_item(mtm, menu, &loc::l("退出 Pastory"), None, None);
+            let quit = add_item(mtm, menu, &loc::l("退出 PasteJar"), None, None);
             let _: () = msg_send![&*quit, setTarget: target];
             quit.setKeyEquivalent(ns_string!("q"));
         }
@@ -368,7 +369,7 @@ fn build_main_menu(mtm: MainThreadMarker) {
         )
     };
     let app_menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), ns_string!(""));
-    let quit = add_item_with_action(mtm, &app_menu, &loc::l("退出 Pastory"), sel!(menuQuit:), "q");
+    let quit = add_item_with_action(mtm, &app_menu, &loc::l("退出 PasteJar"), sel!(menuQuit:), "q");
     // The delegate answers menuQuit: (target set in did_finish_launching's
     // AppDelegate, which outlives everything).
     if let Some(d) = app_delegate() {

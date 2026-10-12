@@ -1,6 +1,6 @@
 //! Port of `Capture/PasteboardWriter.swift`.
 //!
-//! Everything Pastory puts on the pasteboard carries `marker` = item id so the
+//! Everything PasteJar puts on the pasteboard carries `marker` = item id so the
 //! monitor bumps the existing item instead of recording a duplicate.
 
 use objc2::rc::Retained;

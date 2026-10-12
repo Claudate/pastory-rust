@@ -213,14 +213,14 @@ pub fn draw(view: &WelcomeCardView) {
         crate::shelf::card::draw_centered(&pin, rect, 1.0);
         objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
     }
-    // Header: logo · 「Pastory」 serif 16, rule under.
+    // Header: logo · 「PasteJar」 serif 16, rule under.
     if let Some(logo) = theme::logo() {
         let r = CGRect::new(CGPoint::new(18.0, 26.0), CGSize::new(22.0, 22.0));
         crate::shelf::card::draw_centered(&logo, r, 1.0);
     }
     crate::shelf::card::draw_text(
         CGRect::new(CGPoint::new(48.0, 26.0), CGSize::new(200.0, 22.0)),
-        "Pastory",
+        crate::app::brand::BRAND,
         &theme::serif(16.0, false),
         &theme::ink(),
         None,
@@ -228,7 +228,7 @@ pub fn draw(view: &WelcomeCardView) {
     rule(18.0, 48.0, w - 36.0);
     crate::shelf::card::draw_text(
         CGRect::new(CGPoint::new(18.0, 56.0), CGSize::new(w - 36.0, 30.0)),
-        &l("欢迎使用 Pastory"),
+        &l("欢迎使用 PasteJar"),
         &theme::script(24.0),
         &theme::ink(),
         None,
@@ -474,7 +474,7 @@ fn stop_recorder(view: &WelcomeCardView, which: &'static str, new_value: Option<
         ];
         for (owner, key, label) in mine {
             if owner != which && p.shortcut(key) == new_value {
-                view.set_notice(which, Some(l("已被 Pastory 的「%@」占用，换一个").replacen("%@", &l(label), 1)));
+                view.set_notice(which, Some(l("已被 PasteJar 的「%@」占用，换一个").replacen("%@", &l(label), 1)));
                 return;
             }
         }

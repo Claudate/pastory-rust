@@ -1,4 +1,4 @@
-# Pastory — notes for coding agents
+# PasteJar — notes for coding agents
 
 Menu-bar Mac app: clipboard history + screenshot annotation / OCR / region recording. **Rust（objc2 手写 AppKit，单 crate 二进制 pastory，链接系统 libsqlite3，无第三方 UI 框架）** —— 1.0.6 起仓库切到 Rust 管线（[docs/RUST_REWRITE.md](docs/RUST_REWRITE.md) §6 M7 替换决策，M0–M7 全 ✔）；`Sources/Pastory/` 里的 Swift 版冻结归档、仍是行为基准。Product copy: [README.md](README.md) (zh) / [README.en.md](README.en.md). Behaviour bible: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Using the running app as memory for an assistant: [docs/AI.md](docs/AI.md). Mac App Store 上架与 Cloudflare 更新源改造计划：[docs/MAS_PLAN.md](docs/MAS_PLAN.md).
 
@@ -11,13 +11,13 @@ Menu-bar Mac app: clipboard history + screenshot annotation / OCR / region recor
 - Synthetic ⌘V is session-level (`CGEvent` → `.cgSessionEventTap`). Never HID — that latched Command machine-wide.
 - `"导入"` (`ClipStore.importSourceName`) is a stored marker; do not translate it. UI shows 「已导入」.
 - New user-facing string = Chinese literal + `.l` + a row in `App/Localization.swift`. `--selftest l10n` catches duplicate keys (they crash English launch).
-- Open `build/Pastory-Rust.app` from Finder, not Terminal, or Screen Recording is attributed to Terminal.
+- Open `build/PasteJar.app` from Finder, not Terminal, or Screen Recording is attributed to Terminal.
 
 ## Build and self-test
 
 ```bash
-./build-rs.sh                        # host arch → build/Pastory-Rust.app（./build.sh 是 shim，同入口）
-BIN=./build/Pastory-Rust.app/Contents/MacOS/Pastory-Rust
+./build-rs.sh                        # host arch → build/PasteJar.app（./build.sh 是 shim，同入口）
+BIN=./build/PasteJar.app/Contents/MacOS/PasteJar
 S=/tmp/pastory-test
 PASTORY_STORE=$S "$BIN" --selftest l10n
 PASTORY_STORE=$S "$BIN" --selftest shelf /tmp/shelf.png

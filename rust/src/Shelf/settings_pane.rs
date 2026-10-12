@@ -1105,7 +1105,7 @@ fn import_database(view: &SettingsView) {
                         .replacen("%d", &texts.to_string(), 1)
                         .replacen("%d", &images.to_string(), 1),
                 ));
-                let mut info = l("来自 %@。已经在 Pastory 里的内容会自动跳过，Pin 会保留；导入的内容排在 Pastory 自己记录的后面。")
+                let mut info = l("来自 %@。已经在 PasteJar 里的内容会自动跳过，Pin 会保留；导入的内容排在 PasteJar 自己记录的后面。")
                     .replacen("%@", &from, 1);
                 if cleans {
                     info.push_str(&l("\n\n当前保留期是 %d 天，而这些内容都比保留期老：导入会同时把保留期改为「永不删除」，否则它们马上就会被清掉。").replacen("%d", &days.to_string(), 1));
@@ -1258,7 +1258,7 @@ fn stop_recorder(view: &SettingsView, which: &'static str, new_value: Option<Sho
         ];
         for (owner, key, label) in mine {
             if owner != which && p.shortcut(key) == new_value {
-                view.set_notice(which, Some(l("已被 Pastory 的「%@」占用，换一个").replacen("%@", &l(label), 1)));
+                view.set_notice(which, Some(l("已被 PasteJar 的「%@」占用，换一个").replacen("%@", &l(label), 1)));
                 return;
             }
         }

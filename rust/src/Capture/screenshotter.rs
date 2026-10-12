@@ -330,7 +330,7 @@ pub fn capture(
 
 /// `Screenshotter.captureDisplay(_:excluding:backingScale:colorSpaceName:)` —
 /// the whole display, excluding just the given window ids (the picker's mask
-/// windows), fetched fresh. Other Pastory windows, the shelf included, stay
+/// windows), fetched fresh. Other PasteJar windows, the shelf included, stay
 /// in the picture; region/window shots are crops of this.
 pub fn capture_display(
     display: &SCDisplay,

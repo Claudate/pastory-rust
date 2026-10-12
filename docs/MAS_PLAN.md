@@ -10,6 +10,8 @@
 | 双通道并存 | 直发版（Developer ID + zip，现状）与商店版（MAS 沙盒）同一仓库、cargo feature `mas` 分叉；直发管线不动 | ✔ |
 | 联网策略 | 更新检查保留，主源改为自建 Cloudflare feed，GitHub API 降级为兜底源；**商店版只读 feed、绝不下载 zip**（Guideline 2.5.2 禁止下载可执行代码，更新走 App Store 本身） | ✔ |
 | bundle id | 直发版永远 `com.cici.snipclip`（CLAUDE.md 硬规则）；商店版提交前必须换自有 id | 用户定：后期再换 |
+| 品牌 | 商店版定名 **PasteJar**（2026-10-12 拍板）；sweep 见 commit「brand: rename to PasteJar」 |
+| 联系面板 | X/微信/咖啡三格暂保留（按用户指示）；**提审前必须替换或经 mas cfg 移除** |
 | 换皮分层 | L1 素材（图标/图钉/菜单符号）+ L2 色板与字体先行；L3 撕纸形状语言是否重做取决于商店版定位（官方商店版 vs 独立产品） | 待拍板 |
 | 发布源仓库 | updater `REPO`、contact 面板 `REPO_URL`、`release.sh` 均还指向上游 `nothingbutcici/pastory`，而 CI/origin 已是 `Claudate/pastory-rust` —— 发布源已切 Claudate/pastory-rust（updater REPO、contact REPO_URL、release.sh，2026-10-12）；X/微信/咖啡链接随改名一并处置 | 完成 |
 

@@ -28,7 +28,7 @@ pub fn ocr(path: Option<&str>) -> bool {
                 println!("sample render failed");
                 return false;
             };
-            (img, vec!["Pastory Rust", "截图工具", "2026"])
+            (img, vec!["PasteJar", "截图工具", "2026"])
         };
     let t0 = std::time::Instant::now();
     match ocr::recognize(&image) {
@@ -168,7 +168,7 @@ pub fn annotate(out: &str) -> bool {
         )
     };
     let text2 = Annotation {
-        text: "Hello Pastory Rust".into(),
+        text: "Hello PasteJar".into(),
         ..Annotation::new(
             AnnotateTool::Text,
             ink.clone(),
@@ -226,7 +226,7 @@ pub fn ocrpanel(out: &str) -> bool {
     let mtm = objc2::MainThreadMarker::new().expect("selftest on main thread");
     let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(objc2_app_kit::NSApplicationActivationPolicy::Accessory);
-    let sample = "Pastory Rust 是一个截图工具\n所有复制过的内容都留在剪贴板里\nMade in 2026 · 中英混排 OK";
+    let sample = "PasteJar 是一个截图工具\n所有复制过的内容都留在剪贴板里\nMade in 2026 · 中英混排 OK";
     let view = crate::annotate::ocr_panel::controller().debug_view(sample);
     crate::app::selftest_m2::snapshot(&view, out)
 }

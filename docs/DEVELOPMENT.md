@@ -1,15 +1,15 @@
-# Pastory Rust 开发约定
+# PasteJar 开发约定
 
 > 给贡献者和未来的自己看的规则本。面向用户的介绍在仓库根目录的 [README.md](../README.md)（中文）/ [README.en.md](../README.en.md)。
 
-Pastory 是 macOS 15+ 的菜单栏工具：剪贴板历史面板 + 截图标注 / 识别文字 / 区域录屏。Rust，objc2 手写 AppKit（不用第三方 UI 框架），链接系统 libsqlite3。Swift 版在 `Sources/Pastory/` 里冻结归档、是行为基准（现行 1.0.6 的可发行档经替换决策仍为 Rust 构建，见 [RUST_REWRITE.md](RUST_REWRITE.md) §6 M7）。
+PasteJar 是 macOS 15+ 的菜单栏工具：剪贴板历史面板 + 截图标注 / 识别文字 / 区域录屏。Rust，objc2 手写 AppKit（不用第三方 UI 框架），链接系统 libsqlite3。Swift 版在 `Sources/Pastory/` 里冻结归档、是行为基准（现行 1.0.6 的可发行档经替换决策仍为 Rust 构建，见 [RUST_REWRITE.md](RUST_REWRITE.md) §6 M7）。
 
 ## 目录
 
 ```
 Cargo.toml (rust/)         Rust 单 crate 二进制 pastory（objc2 生态 + rusqlite，链接系统 libsqlite3）
-build-rs.sh               cargo build → build/Pastory-Rust.app → codesign（有 Developer ID 用它，否则 ad-hoc）
-dist.sh / release.sh      未变（universal 构建 + 公证 + 盖章 → dist/Pastory-Rust-<版本>.zip；只换二进制来源）
+build-rs.sh               cargo build → build/PasteJar.app → codesign（有 Developer ID 用它，否则 ad-hoc）
+dist.sh / release.sh      未变（universal 构建 + 公证 + 盖章 → dist/PasteJar-<版本>.zip；只换二进制来源）
 Resources/                 Info.plist、entitlements（空）、AppIcon.icns、Logo / MenuIcon / Pushpin、Fonts/（Caveat、Ysabeau Office 及各自的 OFL）
 rust/src/
   App/                     入口、菜单栏、全局快捷键、权限、偏好、更新器、双语表、主题、自测
@@ -32,14 +32,14 @@ docs/                      本文件、RUST_REWRITE.md（Rust 重写记录）、
 ## 构建、分发、发布
 
 ```bash
-./build-rs.sh              # 本机架构，build/Pastory-Rust.app（cargo 单 crate；Rust 工具链 stable 即可）
-./dist.sh                  # arm64 + x86_64，签名、公证、盖章，dist/Pastory-Rust-<版本>.zip 和 首次打开.txt（只换二进制来源）
+./build-rs.sh              # 本机架构，build/PasteJar.app（cargo 单 crate；Rust 工具链 stable 即可）
+./dist.sh                  # arm64 + x86_64，签名、公证、盖章，dist/PasteJar-<版本>.zip 和 首次打开.txt（只换二进制来源）
 ./release.sh notes.md      # 先改 Resources/Info.plist 的 CFBundleShortVersionString 并提交，再跑
 ```
 
-只需要 Rust stable 和 Command Line Tools。没有 Developer ID 证书的机器上两个脚本自动退回 ad-hoc，`首次打开.txt` 会换成「仍要打开」版本。公证凭据是钥匙串 profile `pastory-notary`（`xcrun notarytool store-credentials`），仓库里没有任何密钥。发布包用 Developer ID 签名 + hardened runtime，`spctl --assess` 应显示 `source=Notarized Developer ID`。
+只需要 Rust stable 和 Command Line Tools。没有 Developer ID 证书的机器上两个脚本自动退回 ad-hoc，`首次打开.txt` 会换成「仍要打开」版本。公证凭据是钥匙串 profile `pastory-notary`（`xcrun notarytool store-credentials`），仓库里没有任何密钥。发布包用 Developer ID 签名 + hardened runtime，`spctl --assess` 应显示 `source=Notarized Developer ID`。改 app 名/可执行名升级时，屏幕录制与辅助功能按路径记账，要重新勾选一次。
 
-**更新器**（`rust/src/App/updater.rs`，对应 Swift `App/Updater.swift`）：启动 30 秒后、之后每 24 小时读 `api.github.com/repos/nothingbutcici/pastory/releases/latest`，这是 app 唯一的网络请求，可在设置关闭。tag 必须是 `v<版本>`，资产是 `.zip`。只有 Developer ID 签名的包才自动安装：下载（有进度窗、可取消、30 秒无响应判失败）→ 后台解压 → `codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = <本 Team>"` → TeamIdentifier 与运行中的自己一致 → `replaceItemAt` 原地替换 → 重启。ad-hoc 包、被 App Translocation 挪走的包只打开下载页。
+**更新器**（`rust/src/App/updater.rs`，对应 Swift `App/Updater.swift`）：启动 30 秒后、之后每 24 小时读 `api.github.com/Claudate/pastory-rust/releases/latest`，这是 app 唯一的网络请求，可在设置关闭。tag 必须是 `v<版本>`，资产是 `.zip`。只有 Developer ID 签名的包才自动安装：下载（有进度窗、可取消、30 秒无响应判失败）→ 后台解压 → `codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = <本 Team>"` → TeamIdentifier 与运行中的自己一致 → `replaceItemAt` 原地替换 → 重启。ad-hoc 包、被 App Translocation 挪走的包只打开下载页。
 
 ## 存储
 
@@ -66,7 +66,7 @@ docs/                      本文件、RUST_REWRITE.md（Rust 重写记录）、
 ## 自测
 
 ```bash
-BIN="./build/Pastory-Rust.app/Contents/MacOS/Pastory-Rust"
+BIN="./build/PasteJar.app/Contents/MacOS/PasteJar"
 S=/tmp/pastory-test      # 任何会写库的自测都必须指到一个临时目录
 PASTORY_STORE=$S "$BIN" --selftest shelf <out.png>       # 离屏渲染剪贴板面板（含样例）
 PASTORY_STORE=$S "$BIN" --selftest shelfsearch <out.png> # 搜索等待态
@@ -96,7 +96,7 @@ PASTORY_LANG=en …                                        # 任何渲染类自�
 ## 行为约定
 
 - **快捷键**：默认 ⌥⌘S 截图、⇧⌘V 面板、⌥⌘F 搜索，都可改。录制时当场试注册：被其他应用占用或和自己的另一个重复就拒绝；没有修饰键的单键拒绝；只有 ⌘ / ⇧ 加单键允许但提示会覆盖所有应用。
-- **桌面便签**（`Shelf/DesktopNotes.swift`、`DesktopNoteView.swift`）：把面板里的卡向上拖出面板边界即成为桌面便签（松手在面板上=取消），右键也有「贴到桌面」；便签是同一张纸卡、全文展示（文本最高屏高 60%，超出卡内滚动），底部是 编辑 / 图层 / 关闭；单击复制、双击贴进前台应用；非激活面板，不抢焦点。贴上即自动 Pin；面板里的卡保留并带 note 标记；卡被删便签同删。层级逐张决定（便签底部的图层键 / 右键）：浮于窗口上（默认，拖出时一定看得见）或仅桌面显示（桌面图标之上、所有应用窗口之下）；所有 Space 可见。发现路径：欢迎卡「试一试」多一条、卡片右键「贴到桌面」、以及首次启动本版本时种进历史的 Pin 卡「Pastory 怎么用」（`Shelf/HowToCard.swift`，普通卡片，删了不再出现）。位置存在偏好 `desktopNotes`，启动恢复并夹回可见屏幕。`--selftest note` 渲染。
+- **桌面便签**（`Shelf/DesktopNotes.swift`、`DesktopNoteView.swift`）：把面板里的卡向上拖出面板边界即成为桌面便签（松手在面板上=取消），右键也有「贴到桌面」；便签是同一张纸卡、全文展示（文本最高屏高 60%，超出卡内滚动），底部是 编辑 / 图层 / 关闭；单击复制、双击贴进前台应用；非激活面板，不抢焦点。贴上即自动 Pin；面板里的卡保留并带 note 标记；卡被删便签同删。层级逐张决定（便签底部的图层键 / 右键）：浮于窗口上（默认，拖出时一定看得见）或仅桌面显示（桌面图标之上、所有应用窗口之下）；所有 Space 可见。发现路径：欢迎卡「试一试」多一条、卡片右键「贴到桌面」、以及首次启动本版本时种进历史的 Pin 卡「PasteJar 怎么用」（`Shelf/HowToCard.swift`，普通卡片，删了不再出现）。位置存在偏好 `desktopNotes`，启动恢复并夹回可见屏幕。`--selftest note` 渲染。
 - **面板键盘**：双击 = 复制、收起并粘贴到刚才的应用；⏎ = 复制并收起，只有设置选了「双击 + 回车」且这张卡是用方向键亲手选中的才同样粘贴（搜索、筛选、删除后自动落到的高亮都不算；点击卡片后键盘会交还给原应用，所以鼠标选中后的回车到不了面板）；← → ↑ ↓ 选；空格 Quick Look；⌘P Pin；⌘S 保存到本地；⌫ 删除（Pin 项确认）；⌘F 搜索；直接打字即搜索；⎋ 依次关闭重命名框 / 返回 / 清空搜索 / 收起。设置页 / 联系我打开时只认 ⎋ 和 ⌘F。
 - **合成按键只走会话层**：双击 / 回车粘贴的 ⌘V 通过 `CGEvent` 发到 `.cgSessionEventTap`，发送前等用户的修饰键全部松开，发送期间屏蔽本地键盘事件。**绝不发到 `.cghidEventTap`**：那一层参与系统对物理键盘的记账，曾让 Command 键整机卡住直到重启。
 - **截图流程**：按键瞬间先把鼠标所在屏幕冻结成图，再弹选择层；选择层是 `.nonactivatingPanel`、`CGShieldingWindowLevel()`，画面冻结之后才激活自己并让选择层成为 key window：前台应用此时收起的菜单 / 下拉已经在照片里，而系统不允许后台应用改光标，不激活就没有十字光标（实测私有的 SetsCursorInBackground 也无效）。结束时把焦点还给原来的应用。⎋ 空格 F ⏎ 仍由无修饰键的 Carbon 热键兜底，标注器出现后解绑。截图中再按截图键 = 重新框选；打开着的识别文字面板降到普通层级留在原地，可以被截。取图像素比以 `NSScreen.backingScaleFactor` 为准。
@@ -106,19 +106,19 @@ PASTORY_LANG=en …                                        # 任何渲染类自�
 - **录屏**：SCStream 帧直接进 `AVAssetWriter`，30 fps，原生像素，平均码率每像素每帧 H.264 0.1 / HEVC 0.065 bit，夹在 3–30 Mbps；停止时把最后一帧再补一次。上限 10 分钟。GIF 预算按时长阶梯（≤10 s 6 MB、≤30 s 10 MB、≤60 s 15 MB、更长 20 MB），从长边 1280、10 fps 起步，先降帧率再缩尺寸。录屏启动窗口期点「丢弃」也必须停掉采集流。
 - **导入**（`Clipboard/Importer.swift`）：永远在临时副本上读；Pastory 库按 schema 精确导，Paste（wiheads）有专门读法，其他 SQLite 按启发式；目录扫描按文件头识别、最多三层、超过 6 个库或过宽目录（家目录、Library 等）直接拒绝；id / ext 含 `/` 或 `..` 的行跳过。导入的一批整体排在自己记录之后；保留期不是「永不删除」时只给「导入并改为永不删除」。
 - **双语**（`App/Localization.swift`）：一张 `(中文, English)` 对表，键就是代码里的中文字面量，`"…".l`，带上下文的键写成 `tab|图片` 并用 `"图片".l("tab")`。新增文案 = 写中文字面量 + `.l` + 表里加一行。`--selftest l10n` 守重复键（重复键会让英文环境启动即崩）。中文用「」和全角标点，英文用 ASCII 标点。`ClipStore.importSourceName`（"导入"）是存库标记，永不翻译，显示走「已导入」。
-- **权限**：屏幕录制在第一次截图时请求（不在启动时）；系统弹窗每次启动最多一次，之后被拒时弹自家提示，第一个按钮是「重新启动 Pastory」（授权只对新进程生效）。辅助功能只用于双击 / 回车粘贴，缺失时退化为只复制并收起。从终端直接启动的 Pastory 权限会记在终端名下，正式使用要从 Finder / 启动台打开。
+- **权限**：屏幕录制在第一次截图时请求（不在启动时）；系统弹窗每次启动最多一次，之后被拒时弹自家提示，第一个按钮是「重新启动 PasteJar」（授权只对新进程生效）。辅助功能只用于双击 / 回车粘贴，缺失时退化为只复制并收起。从终端直接启动的 PasteJar 权限会记在终端名下，正式使用要从 Finder / 启动台打开。
 - **性能**：面板启动时预建；缩略图后台解码、缓存超 100 张淘汰最老的三分之一；全文读取、归一化和匹配在 `ClipSearchIndex` actor 中执行，空查询后台预热，输入防抖 80 ms 并取消旧查询。缓存按内容哈希与可搜索元数据失效，Pin / 复制不重读正文；匹配是对小写、预组合文本的字面量搜索，不按字素簇严格比较（👍 能搜到 👍🏽，👩 能搜到 👨‍👩‍👧）。界面只读结果快照，查询或数据版本不匹配时不允许粘贴旧结果，筛选列表和计数按版本缓存；设置页的权限徽标 1 秒轮询。
 
 ## 视觉
 
-纸感：深棕桌面（`Theme.drawGround` / `drawDesk`）+ 米色纸片（`Theme.drawPaper`），当前剪贴板那张卡和选中态是浅蓝纸，按钮统一 `Theme.paperButton`，没有警告色。正文宋体，标题和「Pastory」字样手写体（Caveat；品牌字 Ysabeau Office 只用于「Pastory」）。标注调色盘 = 紫 + #E9631A / #C56F8C / #A9C2E0 / #59382C / #1E151C / #EBEBDF。标注线条是手绘感（路径打平后加低频噪声画两遍，固定 seed，预览与导出一致）。logo 与图标来自作者的品牌稿，不在仓库。
+纸感：深棕桌面（`Theme.drawGround` / `drawDesk`）+ 米色纸片（`Theme.drawPaper`），当前剪贴板那张卡和选中态是浅蓝纸，按钮统一 `Theme.paperButton`，没有警告色。正文宋体，标题和「PasteJar」字样手写体（Caveat；品牌字 Ysabeau Office 只用于「PasteJar」）。标注调色盘 = 紫 + #E9631A / #C56F8C / #A9C2E0 / #59382C / #1E151C / #EBEBDF。标注线条是手绘感（路径打平后加低频噪声画两遍，固定 seed，预览与导出一致）。logo 与图标来自作者的品牌稿，不在仓库。
 
 ## 已知边界
 
 - 选区不跨显示器。
 - 不做条目合并 / 拼接；不做鼠标高亮、缩放、剪辑。
 - 文件条目只存路径引用，源文件删了卡片就失效。
-- 不上云；要跨设备自行把存储目录放进 iCloud Drive，或用「导入」把另一台机器的 Pastory 文件夹导过来（文本 / 链接 / 图片）。
+- 不上云；要跨设备自行把存储目录放进 iCloud Drive，或用「导入」把另一台机器的数据文件夹（目录名仍是 Pastory）导过来（文本 / 链接 / 图片）。
 
 ## Rust 版差异点（针对 Swift → Rust 迁移审计）
 

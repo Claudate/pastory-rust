@@ -894,10 +894,10 @@ define_class!(
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: CGRect) {
             let brand_font = theme::brand_font(BRAND_SIZE);
-            // 「Pastory」 script, padded 22 / 10 / 22.
+            // 「PasteJar」 script, padded 22 / 10 / 22.
             card::draw_text(
                 CGRect::new(CGPoint::new(22.0, 10.0), CGSize::new(SIDEBAR_W - 22.0, card::line_height(&brand_font))),
-                "Pastory",
+                crate::app::brand::BRAND,
                 &brand_font,
                 &theme::on_brown(),
                 None,

@@ -165,13 +165,13 @@ pub fn ensure_screen_recording() -> bool {
         objc2_app_kit::NSAlert::new(mtm)
     };
     alert.setMessageText(&objc2_foundation::NSString::from_str(&l(
-        "Pastory 还没有屏幕录制权限",
+        "PasteJar 还没有屏幕录制权限",
     )));
     alert.setInformativeText(&objc2_foundation::NSString::from_str(&l(
-        "在「系统设置 › 隐私与安全性 › 屏幕录制」里打开 Pastory。已经打开了的话，权限要重新启动后才生效。",
+        "在「系统设置 › 隐私与安全性 › 屏幕录制」里打开 PasteJar。已经打开了的话，权限要重新启动后才生效。",
     )));
     alert.addButtonWithTitle(&objc2_foundation::NSString::from_str(&l(
-        "我已打开，重新启动 Pastory",
+        "我已打开，重新启动 PasteJar",
     )));
     alert.addButtonWithTitle(&objc2_foundation::NSString::from_str(&l("打开系统设置")));
     alert.addButtonWithTitle(&objc2_foundation::NSString::from_str(&l("取消")));

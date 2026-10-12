@@ -15,7 +15,7 @@ fn main() {
     // `assumeIsolated` of the Swift `main.swift`.
     let mtm = match objc2::MainThreadMarker::new() {
         Some(mtm) => mtm,
-        None => panic!("Pastory must run on the main thread"),
+        None => panic!("PasteJar must run on the main thread"),
     };
     // --selftest handling happens before anything AppKit-heavy: mutating
     // commands refuse to run against the real store and exit(2).

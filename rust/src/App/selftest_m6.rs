@@ -189,7 +189,7 @@ pub fn download(rest: &[String]) -> bool {
 /// the ad-hoc self-install guard (Swift's checks table).
 pub fn updater() -> bool {
     let fixture = r#"{"tag_name":"v1.2","html_url":"https://github.com/Claudate/pastory-rust/releases/tag/v1.2","body":"- faster shelf\n- HEIC option",
-  "assets":[{"name":"Pastory-Rust-1.2.zip","browser_download_url":"https://github.com/Claudate/pastory-rust/releases/download/v1.2/Pastory-Rust-1.2.zip"}]}"#;
+  "assets":[{"name":"PasteJar-1.2.zip","browser_download_url":"https://github.com/Claudate/pastory-rust/releases/download/v1.2/PasteJar-1.2.zip"}]}"#;
     let r = crate::app::updater::parse_release(fixture.as_bytes()).ok();
     if let Some(rel) = &r {
         println!(
@@ -201,7 +201,7 @@ pub fn updater() -> bool {
     }
     let checks: Vec<(&str, bool)> = vec![
         ("parses tag/notes/asset", r.as_ref().map(|rel| {
-            rel.version == "1.2" && rel.zip_url.as_deref().and_then(|u| u.rsplit('/').next()) == Some("Pastory-Rust-1.2.zip") && rel.notes.contains("HEIC")
+            rel.version == "1.2" && rel.zip_url.as_deref().and_then(|u| u.rsplit('/').next()) == Some("PasteJar-1.2.zip") && rel.notes.contains("HEIC")
         }).unwrap_or(false)),
         ("1.2 > 1.0", crate::app::updater::is_newer("1.2", "1.0")),
         ("1.0.1 > 1.0", crate::app::updater::is_newer("1.0.1", "1.0")),
@@ -209,13 +209,14 @@ pub fn updater() -> bool {
         ("1.10 > 1.9", crate::app::updater::is_newer("1.10", "1.9")),
         ("notes: zh half, no markdown", {
             let t = crate::app::updater::notes_for_display(
-                "Pastory Rust 1.2\n\n**新功能**\n- 一\n- 二\n\n---\n\nPastory Rust 1.2\n\n**New**\n- one",
+                "PasteJar 1.2\n\n**新功能**\n- 一\n- 二\n\n---\n\nPasteJar 1.2\n\n**New**\n- one",
                 "1.2",
                 false,
             );
             t == "新功能\n•  一\n•  二"
         }),
         ("notes: en half", crate::app::updater::notes_for_display("中文\n---\n**New**\n- one", "1.2", true) == "New\n•  one"),
+        ("notes: legacy brand title stripped", crate::app::updater::notes_for_display("Pastory Rust 1.3\n\n- old", "1.3", true) == "•  old"),
         ("notes: no divider keeps all", crate::app::updater::notes_for_display("- a\n- b", "1.2", true) == "•  a\n•  b"),
         ("ad-hoc build must not self-install", {
             // The dev build of this binary is ad-hoc-signed: it must never

@@ -1,7 +1,7 @@
 name: Release
 
 # Tag-driven release pipeline. `git tag v1.0.7 && git push origin v1.0.7`
-# builds and publishes `Pastory-Rust-<version>-macos-universal.zip` to Releases.
+# builds and publishes `PasteJar-<version>-macos-universal.zip` to Releases.
 #
 # Windows is intentionally absent: `rust/` builds on macOS-only APIs
 # (objc2-app-kit, ScreenCaptureKit, Vision OCR, Carbon hotkeys, NSPasteboard).
@@ -37,12 +37,12 @@ jobs:
       - name: Zip the bundle
         working-directory: build
         run: |
-          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Pastory-Rust.app/Contents/Info.plist)"
-          ditto -c -k --sequesterRsrc --keepParent Pastory-Rust.app "Pastory-Rust-${VERSION}-macos-universal.zip"
-          shasum -a 256 "Pastory-Rust-${VERSION}-macos-universal.zip"
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' PasteJar.app/Contents/Info.plist)"
+          ditto -c -k --sequesterRsrc --keepParent PasteJar.app "PasteJar-${VERSION}-macos-universal.zip"
+          shasum -a 256 "PasteJar-${VERSION}-macos-universal.zip"
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: build/Pastory-Rust-*-macos-universal.zip
+          files: build/PasteJar-*-macos-universal.zip
           generate_release_notes: true
