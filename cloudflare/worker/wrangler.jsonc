@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pastejar-feed",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+
+  // 部署前替换：wrangler kv namespace create RELEASES → 把 id 填这里。
+  "kv_namespaces": [{ "binding": "RELEASES", "id": "REPLACE_ME_KV_NAMESPACE_ID" }],
+
+  // wrangler r2 bucket create pastejar-releases（或按 docs/MAS_PLAN.md §1 换名）。
+  "r2_buckets": [{ "binding": "ASSETS", "bucket_name": "pastejar-releases" }],
+
+  // ⚠️ 必须绑自有域名：*.workers.dev 在大陆长期不稳，这正是自建 feed 的动机
+  //（docs/MAS_PLAN.md §5 第一条）。路线加在这里，例如：
+  //   "routes": [{ "pattern": "feed.example.com", "custom_domain": true }]
+  "routes": [],
+
+  "workers_dev": false
+}

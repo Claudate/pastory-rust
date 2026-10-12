@@ -109,10 +109,10 @@
 - [ ] `cargo build` + 双语 shelf/annotate/ocrpanel 渲染自测过。
 
 **P1 · Cloudflare feed + 客户端两级取源（1–2 天）**
-- [ ] `cloudflare/worker/`：`fetch` 路由 `/v1/releases/latest`、`/files/*`；`wrangler.jsonc`（KV namespace RELEASES、R2 bucket pastory-releases、自有域名路由）。Worker 不写 GitHub 回源逻辑。
-- [ ] `dist.sh`/`release.sh` 发布尾步生成 `release.json`（jq 改写 zip URL + 计 sha256）并推送 KV/R2。
-- [ ] `updater.rs` 两级 `fetch_latest` + 白名单 + 报错文案 + 新 l10n 行。
-- [ ] `--selftest updater/download` 离线 fixture 扩充；CLAUDE.md 规矩：`PASTORY_STORE=/tmp` 下跑。
+- [x] `cloudflare/worker/`：`fetch` 路由 `/v1/releases/latest`、`/files/*`；`wrangler.jsonc`（KV namespace RELEASES、R2 bucket pastory-releases、自有域名路由）。Worker 不写 GitHub 回源逻辑。（代码已落地；**部署待 Cloudflare 账号 + 自有域名**）
+- [x] `release.sh` 尾步 + CI 步骤调 `scripts/push-feed.sh` 生成 feed JSON（改写 zip URL + sha256）并推送 KV/R2；CF env 缺席时跳过、发布不阻塞。
+- [x] `updater.rs` 两级 `fetch_latest`（`FEED_HOST` 编译期常量 `PASTEJAR_FEED_HOST`，未配置=纯 GitHub 现状）+ 白名单 `zip_host_allowed` + 报错文案中性化（更新源）+ l10n 锁步。
+- [x] `--selftest updater` 增加 feed-schema fixture（扩展键容错 + 未知主机拒绝）；`download` 为真实联网项、按计划留到部署后验。
 - [ ] 验收：浏览器打 feed 域名见 JSON；断网/错域名时 app 自动落 GitHub；大陆网络实测 feed 可达（workers.dev 对照组预期不通，证明绑域名必要）。
 
 **P2 · R2 镜像细化（0.5 天，可与 P1 并）**

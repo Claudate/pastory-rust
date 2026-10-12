@@ -12,4 +12,7 @@ if git rev-parse "v$VERSION" >/dev/null 2>&1; then echo "tag v$VERSION already e
 git tag -a "v$VERSION" -m "PasteJar $VERSION"
 git push origin "v$VERSION"
 gh release create "v$VERSION" "dist/PasteJar-$VERSION.zip" --title "PasteJar $VERSION" --notes-file "$NOTES"
+# Mirror onto the self-hosted update feed (Cloudflare; docs/MAS_PLAN.md §1).
+# Skips without CF env — the client then keeps using the GitHub source alone.
+./scripts/push-feed.sh "$VERSION" "$NOTES"
 echo "→ https://github.com/Claudate/pastory-rust/releases/tag/v$VERSION"

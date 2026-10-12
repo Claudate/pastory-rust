@@ -39,7 +39,7 @@ docs/                      本文件、RUST_REWRITE.md（Rust 重写记录）、
 
 只需要 Rust stable 和 Command Line Tools。没有 Developer ID 证书的机器上两个脚本自动退回 ad-hoc，`首次打开.txt` 会换成「仍要打开」版本。公证凭据是钥匙串 profile `pastory-notary`（`xcrun notarytool store-credentials`），仓库里没有任何密钥。发布包用 Developer ID 签名 + hardened runtime，`spctl --assess` 应显示 `source=Notarized Developer ID`。改 app 名/可执行名升级时，屏幕录制与辅助功能按路径记账，要重新勾选一次。
 
-**更新器**（`rust/src/App/updater.rs`，对应 Swift `App/Updater.swift`）：启动 30 秒后、之后每 24 小时读 `api.github.com/Claudate/pastory-rust/releases/latest`，这是 app 唯一的网络请求，可在设置关闭。tag 必须是 `v<版本>`，资产是 `.zip`。只有 Developer ID 签名的包才自动安装：下载（有进度窗、可取消、30 秒无响应判失败）→ 后台解压 → `codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = <本 Team>"` → TeamIdentifier 与运行中的自己一致 → `replaceItemAt` 原地替换 → 重启。ad-hoc 包、被 App Translocation 挪走的包只打开下载页。
+**更新器**（`rust/src/App/updater.rs`，对应 Swift `App/Updater.swift`）：启动 30 秒后、之后每 24 小时检查一次，这是 app 唯一的网络请求（不带标识、可在设置关闭）。取源两级：编译期带 `PASTEJAR_FEED_HOST` 的构建先读自建 feed（Cloudflare Worker，`https://<host>/v1/releases/latest`，见 [cloudflare/README.md](../cloudflare/README.md)），任何失败自动落 `api.github.com/repos/Claudate/pastory-rust/releases/latest`；没编 feed 常量的构建只读 GitHub。tag 必须是 `v<版本>`，资产是 `.zip`；下载主机白名单 = GitHub 自家 + feed 域名（`updater::zip_host_allowed`），签名校验链不变。只有 Developer ID 签名的包才自动安装：下载（有进度窗、可取消、30 秒无响应判失败）→ 后台解压 → `codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = <本 Team>"` → TeamIdentifier 与运行中的自己一致 → `replaceItemAt` 原地替换 → 重启。ad-hoc 包、被 App Translocation 挪走的包只打开下载页。
 
 ## 存储
 
