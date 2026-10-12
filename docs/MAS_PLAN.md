@@ -139,7 +139,7 @@
 - [x] 验证（2026-10-12）：`cargo test` 17 项过（含深色模式 `semantic_colours_follow_the_appearance`）；`cargo check --all-targets` 双 feature 零告警；`./build-rs.sh` 通过；`--selftest l10n` 251 条无重键。与旧皮基准图（`pastory-shelf.png`，2026-09-26 生成）像素差分：shelf **平均通道差 86.1/255、94.2% 像素有可见差异**，OCR 面板 **100%**；对照（同一新皮的 zh vs en）仅 1.4%。另修掉一个真 bug：字标一直静默退回系统字体（`YsabeauOffice-Regular` 在打包的可变字体里不存在，需用族名 `Ysabeau Office`）。
 - [x] 实时窗口的材质合成与圆角裁剪已像素级复核（`--selftest liveshot` + 外部 `screencapture`）：面板左上圆角半径 ≈12px（= `RADIUS_PANEL`）、材质透光由红/蓝背板对照证实。**仍差一步且只有用户能做**：提审前从 Finder 打开 `build/PasteJar.app`，浅色 + 深色各目测一次实时观感（「顺不顺眼」机器判不了）。
 - [ ] L1 素材六件重制（MenuIcon 保持 template 剪影）；等用户的品牌稿。
-- [ ] 联系面板商店版裁掉微信/咖啡二维码（`mas` cfg 或 feed 开关）；GitHub 链接可留。
+- [x] 联系面板商店版裁掉微信/咖啡二维码（`mas` cfg，`contact_pane.rs::draw_sheets`）；商店版只剩自有 GitHub 一格。strings gate 验证：mas 二进制无 `nothingbutcici` / `WeChatGroup.png` / `Coffee.png` / 「Buy me a coffee」（直发版对照各 1–2 处）。
 - [ ] 提交材料：名称/副标题/截图（双语各一组，走 selftest 渲染管线）、隐私标签「不收集数据」、审核备注写明 accessibility entitlement 用途与 feed 性质。Guideline 4.2 抗辩点 = 沙盒化 + 自更新移除 + 更新源与发布主体独立 + **皮肤差异（本节，已有像素证据）**。
 - [ ] bundle id 换发 + 数据迁移说明（§3 最后一条）。
 

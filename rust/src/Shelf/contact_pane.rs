@@ -16,6 +16,8 @@ use crate::app::localization::l;
 use crate::app::theme;
 
 pub const REPO_URL: &str = "https://github.com/Claudate/pastory-rust";
+/// 商店版不出现在任何渠道入口（提审约束），见下方 `draw_sheets`。
+#[cfg(not(feature = "mas"))]
 pub const X_URL: &str = "https://x.com/nothingbutcici";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -23,6 +25,7 @@ enum Link {
     Back,
     Close,
     Repo,
+    #[cfg(not(feature = "mas"))]
     X,
 }
 
@@ -90,6 +93,7 @@ fn run_link(link: Link) {
         }
         Link::Close => crate::shelf::panel::hide(),
         Link::Repo => open_url(REPO_URL),
+        #[cfg(not(feature = "mas"))]
         Link::X => open_url(X_URL),
     }
 }
@@ -123,16 +127,29 @@ fn draw(view: &ContactView) {
     header_button(view, CGRect::new(CGPoint::new(cx + cw - 200.0, 18.0), CGSize::new(160.0, 36.0)), &format!("‹ {}", l("返回剪贴板")), Link::Back, true);
     header_button(view, CGRect::new(CGPoint::new(cx + cw - 40.0, 18.0), CGSize::new(40.0, 36.0)), "✕", Link::Close, false);
     let top = 18.0 + 44.0 + 14.0;
-    // TODO(mas 提审): 上架 Mac App Store 前，微信 / X / 买咖啡三格必须替换为自有渠道
-    // 或经 `mas` cfg 隐藏（见 docs/MAS_PLAN.md §0）；GitHub 格已是自有仓库。
-    let mut x = cx;
-    sheet(view, x, top, &l("反馈 bug & 提功能"), &l("PasteJar 微信小小群，交个朋友"), SheetArt::Qr(theme::resource_named("WeChatGroup.png")));
-    x += 246.0;
-    sheet(view, x, top, &l("GitHub 点个 Star 吧"), &l("开源产品，喜欢就请助力一下"), SheetArt::Link("Claudate/pastory-rust", Link::Repo));
-    x += 246.0;
-    sheet(view, x, top, &l("关注我的 X"), &l("新版本和碎碎念都在这。"), SheetArt::Link("@nothingbutcici", Link::X));
-    x += 246.0;
-    sheet(view, x, top, "Buy me a coffee", &l("觉得好用，请我喝一杯。"), SheetArt::Qr(theme::resource_named("Coffee.png")));
+    draw_sheets(view, cx, top);
+}
+
+/// 联系格子。直发版四栏（微信 / GitHub / X / 买咖啡）；商店版（`mas`）只留
+/// 自有 GitHub 一栏——微信 / X / 买咖啡是第三方或个人渠道，提审时不出现
+/// （见 docs/MAS_PLAN.md §0）。
+fn draw_sheets(view: &ContactView, cx: f64, top: f64) {
+    #[cfg(feature = "mas")]
+    {
+        sheet(view, cx, top, &l("GitHub 点个 Star 吧"), &l("开源产品，喜欢就请助力一下"), SheetArt::Link("Claudate/pastory-rust", Link::Repo));
+    }
+
+    #[cfg(not(feature = "mas"))]
+    {
+        let mut x = cx;
+        sheet(view, x, top, &l("反馈 bug & 提功能"), &l("PasteJar 微信小小群，交个朋友"), SheetArt::Qr(theme::resource_named("WeChatGroup.png")));
+        x += 246.0;
+        sheet(view, x, top, &l("GitHub 点个 Star 吧"), &l("开源产品，喜欢就请助力一下"), SheetArt::Link("Claudate/pastory-rust", Link::Repo));
+        x += 246.0;
+        sheet(view, x, top, &l("关注我的 X"), &l("新版本和碎碎念都在这。"), SheetArt::Link("@nothingbutcici", Link::X));
+        x += 246.0;
+        sheet(view, x, top, "Buy me a coffee", &l("觉得好用，请我喝一杯。"), SheetArt::Qr(theme::resource_named("Coffee.png")));
+    }
 }
 
 fn header_button(view: &ContactView, rect: CGRect, s: &str, link: Link, wide: bool) {
