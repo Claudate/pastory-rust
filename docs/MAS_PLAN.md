@@ -12,7 +12,7 @@
 | bundle id | 直发版永远 `com.cici.snipclip`（CLAUDE.md 硬规则）；商店版提交前必须换自有 id | 用户定：后期再换 |
 | 品牌 | 商店版定名 **PasteJar**（2026-10-12 拍板）；sweep 见 commit「brand: rename to PasteJar」 |
 | 联系面板 | X/微信/咖啡三格暂保留（按用户指示）；**提审前必须替换或经 mas cfg 移除** |
-| 换皮分层 | L1 素材（图标/图钉/菜单符号）+ L2 色板与字体先行；L3 撕纸形状语言是否重做取决于商店版定位（官方商店版 vs 独立产品） | 待拍板 |
+| 换皮分层 | L1 素材（图标/图钉/菜单符号）+ L2 色板与字体 + L3 形状语言。**2026-10-12 拍板：现代 macOS 原生质感，直发版与商店版共用一套新皮**（差异最大、审核最友好；品牌识别保留在 Logo、菜单栏图标与字标） | L2/L3 已落地 | 
 | 发布源仓库 | updater `REPO`、contact 面板 `REPO_URL`、`release.sh` 均还指向上游 `nothingbutcici/pastory`，而 CI/origin 已是 `Claudate/pastory-rust` —— 发布源已切 Claudate/pastory-rust（updater REPO、contact REPO_URL、release.sh，2026-10-12）；X/微信/咖啡链接随改名一并处置 | 完成 |
 
 ## 1. Cloudflare 架构
@@ -132,11 +132,15 @@
 - [ ] 双语 `--selftest shelf` 全面板目测（沙盒下渲染与非沙盒一致性）——待 pkg 真机。
 - [ ] 辅助功能授权流（合成 ⌘V 双击粘贴）+ 屏幕录制首启流在 pkg 安装形态下走通——MAS 的 TCC 条目随容器路径，重新验证一遍。
 
-**P5 · 换皮与提交（独立轨道，定位拍板后启动）**
-- [ ] L1 素材六件重制（MenuIcon 保持 template 剪影）；L2 色板/字体（theme.rs 常量 + `Resources/Fonts`，`fonts_resolve` 断言同步）。
-- [ ] L3 形状语言：官方商店版→不动（品牌连续）；独立产品→四 path 函数重写 + 逐面板版式重调，预算 2–4 天。
+**P5 · 换皮与提交（2026-10-12 启动；定位已拍板：现代 macOS 原生质感，两通道统一）**
+- [x] L2 色板/字体重写（`rust/src/App/theme.rs`）：文具皮（深棕桌 + 米色纸 + 撕纸边 + 宋体）换成 AppKit 语义色（`labelColor` / `controlBackgroundColor` / `separatorColor` / `controlAccentColor`…，绘制时按 appearance 解析，浅色/深色自动成立）+ 系统 UI 字体（跟随用户文字大小）+ 连续圆角。400 处调用点改到新语义 API；旧常量（`PAPER_RADIUS` / `paper_blue_deep` / `on_brown` / `ink`）与 `paper*` 绘制函数删除；`ticket_matches_swift_reference` 那条「与 Swift 逐控制点一致」的断言随旧形状一并移除。
+- [x] L3 形状语言：票券打孔 / 撕口虚线 / 照片白边倾斜 / 撕纸补丁 / 图钉 / 桌纹颗粒已从 `card.rs`、`view.rs`、`welcome_card.rs`、`contact_pane.rs`、`desktop_note_view.rs` 移除（卡片改 `card_path` 统一圆角、缩略图改圆角井、选中态改 accent、侧栏与页签改实色/发丝线）；捕捉 chrome 的按钮同步换名 `chrome_button` 并修正主按钮「accent 底 + `label` 文字」在浅色模式下的对比度不足。
+- [x] shelf 面板加 `NSVisualEffectView` 材质（`.underWindowBackground` + `.behindWindow` + **`.active`**）；材质由窗口服务合成、进不了离屏快照，用 `theme::panel_material_alpha` 作唯一开关（实时 1.0 / 自测 0.0），两种形态共用一条绘制路径。**state 必须 `.active`**：货架是 accessory 窗口从不激活，`.followsWindowActiveState` 恒取非激活色，在 macOS 15 上那是不透明平色——毛玻璃会是死的（红/蓝背板对照实测：0.03% → 37.2% 差异像素）。
+- [x] 验证（2026-10-12）：`cargo test` 17 项过（含深色模式 `semantic_colours_follow_the_appearance`）；`cargo check --all-targets` 双 feature 零告警；`./build-rs.sh` 通过；`--selftest l10n` 251 条无重键。与旧皮基准图（`pastory-shelf.png`，2026-09-26 生成）像素差分：shelf **平均通道差 86.1/255、94.2% 像素有可见差异**，OCR 面板 **100%**；对照（同一新皮的 zh vs en）仅 1.4%。另修掉一个真 bug：字标一直静默退回系统字体（`YsabeauOffice-Regular` 在打包的可变字体里不存在，需用族名 `Ysabeau Office`）。
+- [x] 实时窗口的材质合成与圆角裁剪已像素级复核（`--selftest liveshot` + 外部 `screencapture`）：面板左上圆角半径 ≈12px（= `RADIUS_PANEL`）、材质透光由红/蓝背板对照证实。**仍差一步且只有用户能做**：提审前从 Finder 打开 `build/PasteJar.app`，浅色 + 深色各目测一次实时观感（「顺不顺眼」机器判不了）。
+- [ ] L1 素材六件重制（MenuIcon 保持 template 剪影）；等用户的品牌稿。
 - [ ] 联系面板商店版裁掉微信/咖啡二维码（`mas` cfg 或 feed 开关）；GitHub 链接可留。
-- [ ] 提交材料：名称/副标题/截图（双语各一组，走 selftest 渲染管线）、隐私标签「不收集数据」、审核备注写明 accessibility entitlement 用途与 feed 性质。Guideline 4.2 抗辩点 = 沙盒化 + 自更新移除 + 更新源与发布主体独立 + （若走 L3）皮肤差异。
+- [ ] 提交材料：名称/副标题/截图（双语各一组，走 selftest 渲染管线）、隐私标签「不收集数据」、审核备注写明 accessibility entitlement 用途与 feed 性质。Guideline 4.2 抗辩点 = 沙盒化 + 自更新移除 + 更新源与发布主体独立 + **皮肤差异（本节，已有像素证据）**。
 - [ ] bundle id 换发 + 数据迁移说明（§3 最后一条）。
 
 ## 5. 风险与备注

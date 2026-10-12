@@ -301,6 +301,7 @@ pub fn render_shelf(out: &str, searching: bool) -> bool {
     let mtm = objc2::MainThreadMarker::new().expect("selftest on main thread");
     let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(objc2_app_kit::NSApplicationActivationPolicy::Accessory);
+    apply_forced_appearance(&app);
     let size = CGSize::new(1600.0, 450.0);
     let host = crate::shelf::view::build(mtm, size);
     host.setFrame(CGRect::new(CGPoint::ZERO, size));
@@ -323,4 +324,108 @@ pub fn render_shelf(out: &str, searching: bool) -> bool {
     // let it go deterministically; NSUUID keeps temp-file names unique.
     let _ = NSUUID::new();
     ok
+}
+
+/// Honor `PASTORY_APPEARANCE=dark|light` for this process, so the dark-mode
+/// renders are real pixels rather than an assertion about semantic colours.
+/// `setAppearance:` lives on NSApplication (the view and window halves of
+/// NSAppearanceCustomization are not bound).
+fn apply_forced_appearance(app: &objc2_app_kit::NSApplication) {
+    let forced = crate::app::sandbox::launch()
+        .env
+        .iter()
+        .find(|(k, _)| k == "PASTORY_APPEARANCE")
+        .map(|(_, v)| v.clone());
+    let Some(name) = forced.as_deref() else { return };
+    let token = if name == "dark" {
+        unsafe { objc2_app_kit::NSAppearanceNameDarkAqua }
+    } else {
+        unsafe { objc2_app_kit::NSAppearanceNameAqua }
+    };
+    if let Some(a) = objc2_app_kit::NSAppearance::appearanceNamed(token) {
+        app.setAppearance(Some(&a));
+    }
+}
+
+/// Show the REAL panel — material on, live window — for `secs`, pumping the
+/// run loop so the slide-in, layout and the window server's compositing all
+/// land. A snapshot cannot contain a material (see `theme::panel_material_alpha`),
+/// so this is the only way to see what the user actually gets; pair it with an
+/// external `screencapture`.
+///
+/// With `PASTORY_BACKDROP=#RRGGBB` a borderless window of that exact colour
+/// sits behind the panel. Run it twice with two colours: if the shelf's ground
+/// shifts with the backdrop, the material is really sampling the desktop. It
+/// uses `.normal` level so the shelf (status-bar level) stays on top.
+pub fn live_shot(secs: f64) -> bool {
+    seed_store();
+    panel::with_model_mut(|m| m.reset());
+    panel::with_model_mut(|m| m.show_welcome = false);
+    let mtm = objc2::MainThreadMarker::new().expect("live_shot on main thread");
+    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+    // A regular app for the duration, so the panel is a real foreground
+    // window the window server composites rather than an offscreen tree.
+    // The real path: the app is an accessory and never takes activation, so
+    // the panel is the only surface. `.followsWindowActiveState` therefore
+    // renders whatever the product actually shows — which is exactly what
+    // this self-test is here to measure.
+    app.setActivationPolicy(objc2_app_kit::NSApplicationActivationPolicy::Accessory);
+    apply_forced_appearance(&app);
+    let backdrop = crate::app::sandbox::launch()
+        .env
+        .iter()
+        .find(|(k, _)| k == "PASTORY_BACKDROP")
+        .map(|(_, v)| v.clone());
+    let _backdrop_window = backdrop.as_deref().and_then(|hex| make_backdrop(mtm, hex));
+    panel::prewarm();
+    panel::show();
+    println!(
+        "     live panel up: material alpha {:.2}, {} material views",
+        crate::app::theme::panel_material_alpha(),
+        panel::content_view()
+            .map(|r| r
+                .subviews()
+                .iter()
+                .filter(|v| v.class().name().to_string_lossy().contains("VisualEffect"))
+                .count())
+            .unwrap_or(0)
+    );
+    let run_loop = objc2_foundation::NSRunLoop::mainRunLoop();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(secs);
+    while std::time::Instant::now() < deadline {
+        let limit = objc2_foundation::NSDate::dateWithTimeIntervalSinceNow(0.05);
+        // SAFETY: NSDefaultRunLoopMode is a valid mode token for the main loop.
+        let mode: &'static objc2_foundation::NSRunLoopMode =
+            unsafe { objc2_foundation::NSDefaultRunLoopMode };
+        run_loop.runMode_beforeDate(mode, &limit);
+    }
+    true
+}
+
+/// A solid-colour window behind the shelf, for the material test above.
+fn make_backdrop(mtm: objc2::MainThreadMarker, hex: &str) -> Option<objc2::rc::Retained<objc2_app_kit::NSWindow>> {
+    let v = u32::from_str_radix(hex.trim_start_matches('#'), 16).ok()?;
+    let color = objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(
+        ((v >> 16) & 0xFF) as f64 / 255.0,
+        ((v >> 8) & 0xFF) as f64 / 255.0,
+        (v & 0xFF) as f64 / 255.0,
+        1.0,
+    );
+    let screen = objc2_app_kit::NSScreen::mainScreen(mtm)?;
+    let frame = screen.frame();
+    let w = unsafe {
+        objc2_app_kit::NSWindow::initWithContentRect_styleMask_backing_defer(
+            mtm.alloc::<objc2_app_kit::NSWindow>(),
+            frame,
+            objc2_app_kit::NSWindowStyleMask::Borderless,
+            objc2_app_kit::NSBackingStoreType::Buffered,
+            false,
+        )
+    };
+    w.setBackgroundColor(Some(&color));
+    w.setOpaque(true);
+    w.setLevel(0);
+    unsafe { w.setReleasedWhenClosed(false) };
+    w.orderFrontRegardless();
+    Some(w)
 }

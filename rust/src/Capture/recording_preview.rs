@@ -23,7 +23,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSString, NSURL};
 
 use crate::app::{localization::l, theme};
-use crate::capture::selection_overlay::paper_button_export;
+use crate::capture::selection_overlay::chrome_button_export;
 
 // MARK: Hand-declared AVPlayerView (QLPreviewPanel 同款 extern class)
 
@@ -201,9 +201,9 @@ impl TransportBarImpl {
             CGPoint::new(0.0, bounds.min().y + bounds.size.height / 2.0 - BUTTON_SIZE / 2.0),
             CGSize::new(BUTTON_SIZE, BUTTON_SIZE),
         );
-        theme::paper().setFill();
+        theme::surface().setFill();
         objc2_app_kit::NSBezierPath::bezierPathWithOvalInRect(disc).fill();
-        theme::ink().colorWithAlphaComponent(0.5).setStroke();
+        theme::label().colorWithAlphaComponent(0.5).setStroke();
         objc2_app_kit::NSBezierPath::bezierPathWithOvalInRect(
             crate::app::coordinates::inset_rect(disc, 0.5, 0.5),
         )
@@ -211,7 +211,7 @@ impl TransportBarImpl {
         // Play/pause glyph, tinted by theme ink
         let name = if self.playing() { "pause.fill" } else { "play.fill" };
         if let Some(icon) = symbol_icon(name, 14.0, unsafe { objc2_app_kit::NSFontWeightBold }) {
-            let tinted = tint(icon, &theme::ink());
+            let tinted = tint(icon, &theme::label());
             let s = tinted.size();
             let off = if self.playing() { 0.0 } else { 1.0 };
             tinted.drawInRect(CGRect::new(
@@ -223,7 +223,7 @@ impl TransportBarImpl {
             ));
         }
         // times
-        let attrs = crate::shelf::card::attrs(&theme::serif(14.0, false), &theme::on_brown(), None);
+        let attrs = crate::shelf::card::attrs(&theme::serif(14.0, false), &theme::label(), None);
         let current_ns = objc2_foundation::NSString::from_str(&Self::clock(self.ivars().current.get()));
         unsafe {
             current_ns.drawAtPoint_withAttributes(
@@ -244,10 +244,10 @@ impl TransportBarImpl {
         }
         // Track
         let tr = self.track_rect();
-        theme::on_brown().colorWithAlphaComponent(0.18).setFill();
+        theme::label().colorWithAlphaComponent(0.18).setFill();
         objc2_app_kit::NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(tr, 3.0, 3.0).fill();
         let f = (self.ivars().current.get() / self.ivars().duration.get()).min(1.0).max(0.0);
-        theme::paper_blue().setFill();
+        theme::accent().setFill();
         objc2_app_kit::NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
             CGRect::new(tr.origin, CGSize::new(tr.size.width * f, tr.size.height)),
             3.0,
@@ -258,9 +258,9 @@ impl TransportBarImpl {
             CGPoint::new(tr.origin.x + tr.size.width * f - 7.0, (tr.origin.y + tr.size.height / 2.0) - 7.0),
             CGSize::new(14.0, 14.0),
         );
-        theme::paper().setFill();
+        theme::surface().setFill();
         objc2_app_kit::NSBezierPath::bezierPathWithOvalInRect(knob).fill();
-        theme::ink().colorWithAlphaComponent(0.6).setStroke();
+        theme::label().colorWithAlphaComponent(0.6).setStroke();
         objc2_app_kit::NSBezierPath::bezierPathWithOvalInRect(
             crate::app::coordinates::inset_rect(knob, 0.5, 0.5),
         )
@@ -451,7 +451,7 @@ impl RecordingPreviewWindow {
             unsafe { NSAppearanceNameDarkAqua },
         )
         .expect("darkAqua")));
-        window.setBackgroundColor(Some(&theme::brown()));
+        window.setBackgroundColor(Some(&theme::ground()));
         unsafe {
             window.setReleasedWhenClosed(false);
         }
@@ -522,7 +522,7 @@ impl RecordingPreviewWindow {
         // Bottom row: info (left), 丢弃 · 复制为 GIF · 复制为 MP4 (right).
         let info = objc2_app_kit::NSTextField::labelWithString(&NSString::from_str(""), mtm);
         info.setFont(Some(&theme::serif(13.0, false)));
-        info.setTextColor(Some(&theme::on_brown_muted()));
+        info.setTextColor(Some(&theme::label_tertiary()));
         info.setFrame(CGRect::new(
             CGPoint::new(PAD, 20.0),
             CGSize::new((rect.size.width - PAD * 2.0) / 2.0, 20.0),
@@ -552,7 +552,7 @@ impl RecordingPreviewWindow {
             .iter()
             .rev()
             {
-                let b = paper_button_export(title, *primary, *ground, Some(me_obj), *selector);
+                let b = chrome_button_export(title, *primary, *ground, Some(me_obj), *selector);
                 let bw = b.frame().size.width;
                 rx -= bw;
                 b.setFrameOrigin(CGPoint::new(rx, 15.0));

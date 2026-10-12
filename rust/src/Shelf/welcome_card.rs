@@ -200,17 +200,8 @@ pub fn draw(view: &WelcomeCardView) {
     {
         objc2_app_kit::NSGraphicsContext::saveGraphicsState_class();
         crate::shelf::card::shadow(&objc2_app_kit::NSColor::blackColor().colorWithAlphaComponent(0.4), 9.0, 2.0, 6.0).set();
-        theme::paper().setFill();
-        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(card, 6.0, 6.0).fill();
-        objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
-    }
-    if let Some(pin) = theme::pushpin() {
-        let ph = 44.0f64.min(pin.size().height.max(1.0));
-        let pw = ph * pin.size().width / pin.size().height.max(1.0);
-        let rect = CGRect::new(CGPoint::new(card.mid().x - pw / 2.0, card.min().y - 6.0), CGSize::new(pw, ph));
-        objc2_app_kit::NSGraphicsContext::saveGraphicsState_class();
-        crate::shelf::card::shadow(&objc2_app_kit::NSColor::blackColor().colorWithAlphaComponent(0.28), 2.0, 1.0, 2.0).set();
-        crate::shelf::card::draw_centered(&pin, rect, 1.0);
+        theme::surface().setFill();
+        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(card, theme::RADIUS_CARD, theme::RADIUS_CARD).fill();
         objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
     }
     // Header: logo · 「PasteJar」 serif 16, rule under.
@@ -222,7 +213,7 @@ pub fn draw(view: &WelcomeCardView) {
         CGRect::new(CGPoint::new(48.0, 26.0), CGSize::new(200.0, 22.0)),
         crate::app::brand::BRAND,
         &theme::serif(16.0, false),
-        &theme::ink(),
+        &theme::label(),
         None,
     );
     rule(18.0, 48.0, w - 36.0);
@@ -230,10 +221,10 @@ pub fn draw(view: &WelcomeCardView) {
         CGRect::new(CGPoint::new(18.0, 56.0), CGSize::new(w - 36.0, 30.0)),
         &l("欢迎使用 PasteJar"),
         &theme::script(24.0),
-        &theme::ink(),
+        &theme::label(),
         None,
     );
-    theme::ink().colorWithAlphaComponent(0.6).setFill();
+    theme::label().colorWithAlphaComponent(0.6).setFill();
     NSBezierPath::bezierPathWithRect(CGRect::new(CGPoint::new(18.0, rule_y(b)), CGSize::new(w - 36.0, 1.0))).fill();
 
     let st = view.ivars().state.borrow();
@@ -242,7 +233,7 @@ pub fn draw(view: &WelcomeCardView) {
     let right = right_column_x(b);
     heading(left, ry + 14.0, &l("设置常用快捷键"));
     heading(right, ry + 14.0, &l("试一试"));
-    theme::ink().colorWithAlphaComponent(0.15).setFill();
+    theme::label().colorWithAlphaComponent(0.15).setFill();
     NSBezierPath::bezierPathWithRect(CGRect::new(CGPoint::new(right - 20.0, ry + 18.0), CGSize::new(1.0, h - ry - 100.0))).fill();
 
     let mut y_step = ry + 14.0 + 26.0 + 8.0;
@@ -273,34 +264,39 @@ pub fn draw(view: &WelcomeCardView) {
         CGRect::new(CGPoint::new(48.0, h - 34.0), CGSize::new(300.0, 20.0)),
         &l("稍后也能在设置中调整哦"),
         &theme::serif(12.0, false),
-        &theme::ink_muted(),
+        &theme::label_secondary(),
         None,
     );
     let done = done_rect(b);
     {
         let capsule = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(done, 8.0, 8.0);
-        theme::brown().setFill();
+        theme::accent().setFill();
         capsule.fill();
     }
     let label = l("开始使用");
-    let font = theme::serif(15.0, true);
+    let font = theme::semibold(15.0);
     let tw = crate::shelf::card::measure(&label, &font, 200.0, None).width;
-    crate::shelf::card::draw_line_centered(&label, &font, &theme::on_brown(), done.min().x + (done.size.width - tw) / 2.0, done.mid().y, tw + 1.0);
+    crate::shelf::card::draw_line_centered(
+        &label,
+        &font,
+        &objc2_app_kit::NSColor::alternateSelectedControlTextColor(),
+        done.min().x + (done.size.width - tw) / 2.0,
+        done.mid().y,
+        tw + 1.0,
+    );
 }
 
 fn rule(x: f64, y: f64, w: f64) {
-    theme::ink().colorWithAlphaComponent(0.7).setFill();
+    theme::label().colorWithAlphaComponent(0.7).setFill();
     NSBezierPath::bezierPathWithRect(CGRect::new(CGPoint::new(x, y), CGSize::new(w, 1.0))).fill();
 }
 
-/// Section label on a torn brown scrap (the welcome's own label shape).
+/// Section label: plain secondary type above its rows.
 fn heading(x: f64, y: f64, s: &str) {
-    let font = theme::serif(14.0, true);
+    let font = theme::semibold(13.0);
     let tw = crate::shelf::card::measure(s, &font, 400.0, None).width;
     let rect = CGRect::new(CGPoint::new(x, y), CGSize::new(tw + 24.0, crate::shelf::card::line_height(&font) + 8.0));
-    theme::brown().setFill();
-    theme::torn_paper_path(rect, true, true, true, true, 21, 1.6, 6.0).fill();
-    crate::shelf::card::draw_line_centered(s, &font, &theme::on_brown(), rect.min().x + 12.0, rect.mid().y, tw + 1.0);
+    crate::shelf::card::draw_line_centered(s, &font, &theme::label_secondary(), rect.min().x, rect.mid().y, tw + 1.0);
 }
 
 /// Icon · title · keycaps.
@@ -317,7 +313,7 @@ fn step_row(view: &WelcomeCardView, x: f64, y: f64, title: &str, which: &'static
         CGRect::new(CGPoint::new(x, y), CGSize::new(200.0, 22.0)),
         title,
         &title_font,
-        &theme::ink(),
+        &theme::label(),
         None,
     );
     if let Some(n) = &notice {
@@ -325,7 +321,7 @@ fn step_row(view: &WelcomeCardView, x: f64, y: f64, title: &str, which: &'static
             CGRect::new(CGPoint::new(x, y + 20.0), CGSize::new(220.0, 16.0)),
             n,
             &theme::serif(11.0, false),
-            &theme::ink().colorWithAlphaComponent(0.45),
+            &theme::label().colorWithAlphaComponent(0.45),
             Some(1.0),
         );
     } else if taken {
@@ -333,7 +329,7 @@ fn step_row(view: &WelcomeCardView, x: f64, y: f64, title: &str, which: &'static
             CGRect::new(CGPoint::new(x, y + 20.0), CGSize::new(220.0, 16.0)),
             &l("被其他应用占用，点击换一个"),
             &theme::serif(11.0, false),
-            &theme::ink().colorWithAlphaComponent(0.45),
+            &theme::label().colorWithAlphaComponent(0.45),
             Some(1.0),
         );
     }
@@ -375,27 +371,27 @@ fn draw_keycap(s: &str, x: &mut f64, y: f64) {
     {
         objc2_app_kit::NSGraphicsContext::saveGraphicsState_class();
         crate::shelf::card::shadow(&objc2_app_kit::NSColor::blackColor().colorWithAlphaComponent(0.18), 1.5, 0.0, 2.0).set();
-        theme::paper().setFill();
+        theme::surface().setFill();
         NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 8.0, 8.0).fill();
         objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
     }
     let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 8.0, 8.0);
-    theme::ink().colorWithAlphaComponent(0.18).setStroke();
+    theme::label().colorWithAlphaComponent(0.18).setStroke();
     path.setLineWidth(1.0);
     path.stroke();
-    crate::shelf::card::draw_line_centered(s, &font, &theme::ink(), rect.min().x + (rect.size.width - tw) / 2.0, rect.mid().y, tw + 1.0);
+    crate::shelf::card::draw_line_centered(s, &font, &theme::label(), rect.min().x + (rect.size.width - tw) / 2.0, rect.mid().y, tw + 1.0);
     *x += w + 10.0;
 }
 
 /// Checklist line: empty box / filled with a strike when done.
 fn todo_row(x: f64, y: f64, done: bool, text_s: &str) {
     let icon = if done { "checkmark.square.fill" } else { "square" };
-    let color = if done { theme::paper_blue_deep().colorWithAlphaComponent(0.6) } else { theme::ink().colorWithAlphaComponent(0.5) };
+    let color = if done { theme::accent().colorWithAlphaComponent(0.6) } else { theme::label().colorWithAlphaComponent(0.5) };
     if let Some(img) = crate::shelf::card::symbol(icon, 14.0, crate::shelf::card::SymbolWeight::Light, &color) {
         crate::shelf::card::draw_centered(&img, CGRect::new(CGPoint::new(x, y + 2.0), CGSize::new(20.0, 20.0)), 1.0);
     }
     let font = theme::serif(14.0, false);
-    let color_t = if done { theme::ink().colorWithAlphaComponent(0.35) } else { theme::ink() };
+    let color_t = if done { theme::label().colorWithAlphaComponent(0.35) } else { theme::label() };
     let tw = crate::shelf::card::measure(text_s, &font, 400.0, None).width;
     crate::shelf::card::draw_text(
         CGRect::new(CGPoint::new(x + 28.0, y + 2.0), CGSize::new(tw + 1.0, 22.0)),
@@ -405,7 +401,7 @@ fn todo_row(x: f64, y: f64, done: bool, text_s: &str) {
         Some(1.0),
     );
     if done {
-        theme::ink().colorWithAlphaComponent(0.35).setFill();
+        theme::label().colorWithAlphaComponent(0.35).setFill();
         NSBezierPath::bezierPathWithRect(CGRect::new(
             CGPoint::new(x + 28.0, y + 2.0 + crate::shelf::card::line_height(&font) / 2.0 - 1.0),
             CGSize::new(tw, 1.0),
@@ -415,7 +411,7 @@ fn todo_row(x: f64, y: f64, done: bool, text_s: &str) {
 
 /// Dashed tear-off line with the two edge notches (welcome's ticketRule).
 fn ticket_rule(y: f64, w: f64) {
-    theme::ink().colorWithAlphaComponent(0.35).setStroke();
+    theme::label().colorWithAlphaComponent(0.35).setStroke();
     let dash: [f64; 2] = [4.0, 4.0];
     let line = NSBezierPath::new();
     line.moveToPoint(CGPoint::new(18.0, y));
@@ -424,7 +420,7 @@ fn ticket_rule(y: f64, w: f64) {
         line.setLineDash_count_phase(dash.as_ptr(), 2, 0.0);
     }
     line.stroke();
-    theme::brown().setFill();
+    theme::ground().setFill();
     NSBezierPath::bezierPathWithOvalInRect(CGRect::new(CGPoint::new(18.0 - 8.0, y - 8.0), CGSize::new(16.0, 16.0))).fill();
     NSBezierPath::bezierPathWithOvalInRect(CGRect::new(
         CGPoint::new(w - 18.0 - 8.0, y - 8.0),

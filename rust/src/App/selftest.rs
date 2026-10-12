@@ -11,7 +11,7 @@ use crate::app::{localization, sandbox};
 /// The commands that write to a store (SelfTest.swift:18). A bare read-only
 /// command needs no sandbox; a mutating one refuses to run without one.
 const MUTATING: &[&str] = &[
-    "clipboard", "retention", "shelf", "shelfsearch", "search", "settings",
+    "clipboard", "retention", "shelf", "shelfsearch", "liveshot", "search", "settings",
     "editors", "import", "ingest", "tombstone", "heic", "pbfiles", "welcome",
     "note", "contact",
 ];
@@ -81,7 +81,7 @@ fn run(cmd: &str, rest: &[String]) -> bool {
             println!(
                 "{} brand fonts registered ({})",
                 if any { "ok  " } else { "FAIL" },
-                if any { "YsabeauOffice/Caveat" } else { "none found" }
+                if any { "YsabeauOffice" } else { "none found" }
             );
             any
         }
@@ -170,6 +170,11 @@ fn run(cmd: &str, rest: &[String]) -> bool {
         "shelfsearch" => crate::app::selftest_m2::render_shelf(
             rest.first().map(String::as_str).unwrap_or("/tmp/pastory-search.png"),
             true,
+        ),
+        // M2 UI: the live panel on screen (material composited by the window
+        // server) — pair with an external screencapture.
+        "liveshot" => crate::app::selftest_m2::live_shot(
+            rest.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(4.0),
         ),
         // M3 diagnostics: menu-bar click wiring (target/action/mask/performClick).
         "gif" => crate::app::selftest_m5::gif(),

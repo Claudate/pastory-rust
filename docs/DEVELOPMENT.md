@@ -79,6 +79,7 @@ PASTORY_STORE=$S "$BIN" --selftest note <out.png>        # 桌面便签
 PASTORY_STORE=$S "$BIN" --selftest editors <out.png>     # 文本 / 图片编辑窗
 PASTORY_STORE=$S "$BIN" --selftest ocrpanel <out.png>    # 识别文字面板
 PASTORY_STORE=$S "$BIN" --selftest updatewin <out.png>   # 更新进度窗
+PASTORY_STORE=$S "$BIN" --selftest liveshot 6             # 真窗口形态的面板 6 秒（材质由窗口服务合成，离屏拍不到），配外部 screencapture
 PASTORY_STORE=$S "$BIN" --selftest annotate <out.png>    # 标注画布 + 工具条，另存 <out>.flat.png 为合成结果
 PASTORY_STORE=$S "$BIN" --selftest annotationtext <out.png> # 文字框缩放、换行、输入法和编辑/导出排版
 PASTORY_STORE=$S "$BIN" --selftest preview <out.png>     # 录屏预览窗
@@ -87,6 +88,8 @@ PASTORY_STORE=$S "$BIN" --selftest import <db>           # 用一个外来 SQLit
 PASTORY_STORE=$S "$BIN" --selftest download <url> [out]  # 用更新器的下载器真实下载一次
 PASTORY_STORE=$S "$BIN" --selftest clipboard 10          # 监听 10 秒，打印记录到的条目
 PASTORY_LANG=en …                                        # 任何渲染类自测加这个变量出英文
+PASTORY_APPEARANCE=dark …                                # 渲染类 / liveshot 强制外观（dark | light）
+PASTORY_BACKDROP=#FF0000 …                               # 仅 liveshot：面板后面垫一块该纯色的窗口，做材质透光对照
 ```
 
 - `PASTORY_STORE` / `PASTORY_LANG` 只在命令行带 `--selftest` 时生效（`App/Sandbox.swift`）；正常启动一律忽略，壳里残留的变量不会把 app 指到沙箱。
@@ -113,7 +116,9 @@ PASTORY_LANG=en …                                        # 任何渲染类自�
 
 ## 视觉
 
-纸感：深棕桌面（`Theme.drawGround` / `drawDesk`）+ 米色纸片（`Theme.drawPaper`），当前剪贴板那张卡和选中态是浅蓝纸，按钮统一 `Theme.paperButton`，没有警告色。正文宋体，标题和「PasteJar」字样手写体（Caveat；品牌字 Ysabeau Office 只用于「PasteJar」）。标注调色盘 = 紫 + #E9631A / #C56F8C / #A9C2E0 / #59382C / #1E151C / #EBEBDF。标注线条是手绘感（路径打平后加低频噪声画两遍，固定 seed，预览与导出一致）。logo 与图标来自作者的品牌稿，不在仓库。
+原生 macOS 质感：语义色（`labelColor` / `controlBackgroundColor` / `separatorColor` / `controlAccentColor`…，绘制时按当前 appearance 解析，浅色深色自动成立，没有第二套代码路径）+ 系统 UI 字体（跟随用户的文字大小设置）+ 连续圆角（`RADIUS_CARD` 10 / `RADIUS_PANEL` 12 / `RADIUS_CONTROL` 6）。shelf 面板底下是一层 `NSVisualEffectView`（`.underWindowBackground` + `.behindWindow`），桌面透过它给窗口上色；材质由窗口服务合成、进不了离屏快照，`theme::panel_material_alpha` 是唯一的开关（实时窗口 1.0、自测 0.0），两种形态共用一条绘制路径，`--selftest shelf` 的产物因此与实际观感一致。**state 必须是 `.active`**：货架是 accessory 窗口、从不取激活，`.followsWindowActiveState` 会恒解析到非激活色，而在 macOS 15 上那是不透明平色——毛玻璃就等于是死的（红 / 蓝背板各截一张对照：`.followsWindowActiveState` 面板区只有 0.03% 像素随桌面变，`.active` 有 37.2%）。要看真实合成面板用 `--selftest liveshot`（`Shelf/view.rs::make_material_view`）。标注调色盘 = 紫 + #E9631A / #C56F8C / #A9C2E0 / #59382C / #1E151C / #EBEBDF（工具调色板是固定色，不随皮肤走）。标注线条保留手绘感（路径打平后加低频噪声画两遍，固定 seed，预览与导出一致）。品牌识别只剩字标（Ysabeau Office，按**族名**取——打包的这份是可变字体，没有 `YsabeauOffice-Regular` 这个面，写 PostScript 名会静默退回系统字体）、Logo 与菜单栏剪影。logo 与图标来自作者的品牌稿，不在仓库。
+
+**与冻结的 Swift 版的关系（2026-10-12 起）**：`Sources/Pastory/` 仍是**行为**基准（几何、交互、快捷键、日志文案），但不再是**外观**基准。这一段皮肤是 PasteJar 1.0.7 起刻意与 Swift 版分开的：旧皮是深棕桌面 + 米色纸片 + 撕纸边 + 宋体的文具风，逐值抄自 `App/Theme.swift`（连票券路径的贝塞尔控制点都有测试断言一致），而且完全没有深色模式。新皮只在 `rust/src/App/theme.rs` 一处定义，几何语汇（票券打孔、撕口虚线、照片白边倾斜、图钉、桌纹颗粒）已从 `card.rs` / `view.rs` / `welcome_card.rs` / `contact_pane.rs` / `desktop_note_view.rs` 移除。为什么要分：两个产品 UI 1:1 相同是 Mac App Store 4.2 的实质风险，见 `docs/MAS_PLAN.md` P5。**改外观只动 `theme.rs`；不要在调用点写死颜色或字号。**
 
 ## 已知边界
 

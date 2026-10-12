@@ -447,7 +447,7 @@ fn sync_rename_field(ui: &mut Ui, s: &Snapshot) {
                 field.setDrawsBackground(false);
                 field.setFocusRingType(objc2_app_kit::NSFocusRingType(0)); // none
                 field.setFont(Some(&theme::script(20.0)));
-                field.setTextColor(Some(&theme::ink()));
+                field.setTextColor(Some(&theme::label()));
                 field.setEditable(true);
                 field.setSelectable(true);
                 let delegate = ui
@@ -597,6 +597,17 @@ pub fn build(mtm: MainThreadMarker, size: CGSize) -> Retained<ShelfRootView> {
     reset_ui();
     let root = ShelfRootView::new(mtm, CGRect::new(CGPoint::ZERO, size));
     let content = content_rect(size);
+    // The material goes in first so it backs every subview below; a snapshot
+    // cannot composite one, so the shelf's render self-tests skip it (the
+    // opaque ground then draws the same frame).
+    if crate::shelf::panel::is_material_enabled() {
+        let glass = make_material_view(mtm, CGRect::new(CGPoint::ZERO, size));
+        root.addSubview(&glass);
+    }
+    // Round the host layer as well as the drawn path: the material is a
+    // full-bleed subview, so without this it would square off the silhouette
+    // the path rounds.
+    theme::clip_to_radius(&root, theme::RADIUS_PANEL);
     let sidebar = SidebarView::new(mtm, CGRect::new(CGPoint::ZERO, CGSize::new(SIDEBAR_W, size.height)));
     root.addSubview(&sidebar);
     let header = HeaderView::new(mtm, CGRect::new(content.min(), CGSize::new(content.size.width, HEADER_H)));
@@ -640,13 +651,37 @@ pub fn build(mtm: MainThreadMarker, size: CGSize) -> Retained<ShelfRootView> {
     root
 }
 
-fn make_search_field(mtm: MainThreadMarker) -> Retained<NSTextField> {
-    let field = NSTextField::initWithFrame(NSTextField::alloc(mtm), CGRect::ZERO);
+/// The panel's backing material. `BehindWindow` is what makes the desktop
+/// tint the panel; the appearance resolves light or dark on its own.
+///
+/// The state must be `.active`, and that is not cosmetic. The shelf is an
+/// accessory window that never takes activation, so
+/// `.followsWindowActiveState` resolves to its INACTIVE shade — which on
+/// macOS 15 is opaque, not translucent. Measured with a solid backdrop
+/// behind the panel: 0.03% of the panel's pixels changed between a red and
+/// a blue desktop (i.e. it saw nothing), against 37.2% with `.active`. The
+/// inactive shade would make the material a no-op.
+fn make_material_view(mtm: MainThreadMarker, frame: CGRect) -> Retained<objc2_app_kit::NSVisualEffectView> {
+    use objc2_app_kit::{
+        NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
+    };
+    let v = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
+    v.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
+    v.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+    v.setState(NSVisualEffectState::Active);
+    v.setAutoresizingMask(
+        objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable
+            | objc2_app_kit::NSAutoresizingMaskOptions::ViewHeightSizable,
+    );
+    v
+}
+
+fn make_search_field(mtm: MainThreadMarker) -> Retained<NSTextField> {    let field = NSTextField::initWithFrame(NSTextField::alloc(mtm), CGRect::ZERO);
     field.setBezeled(false);
     field.setDrawsBackground(false);
     field.setFocusRingType(objc2_app_kit::NSFocusRingType(0)); // none
     field.setFont(Some(&theme::serif(15.0, false)));
-    field.setTextColor(Some(&theme::on_brown()));
+    field.setTextColor(Some(&theme::label()));
     field.setEditable(true);
     field.setSelectable(true);
     update_placeholder(&field, true);
@@ -675,7 +710,7 @@ fn update_placeholder(field: &NSTextField, visible: bool) {
     let font = theme::serif(15.0, false);
     // SAFETY: same-class upcasts for the erased attribute value slots.
     let font_obj = unsafe { &*(objc2::rc::Retained::as_ptr(&font) as *const AnyObject) };
-    let color = theme::on_brown_muted();
+    let color = theme::label_tertiary();
     let color_obj = unsafe { &*(objc2::rc::Retained::as_ptr(&color) as *const AnyObject) };
     unsafe {
         s.addAttribute_value_range(objc2_app_kit::NSFontAttributeName, font_obj, range);
@@ -716,29 +751,25 @@ define_class!(
         fn draw_rect(&self, _dirty: CGRect) {
             let bounds = self.bounds();
             NSGraphicsContext::saveGraphicsState_class();
-            rounded_top(bounds, 14.0).addClip();
-            // Paint.desk tiled over the window; top corners clipped round.
-            NSColor::colorWithPatternImage(&theme::desk_tile()).setFill();
-            NSBezierPath::bezierPathWithRect(bounds).fill();
-            // Sidebar ground (brownDeep 0.6) + the hand-ruled seam.
-            theme::brown_deep()
-                .colorWithAlphaComponent(0.6)
-                .setFill();
+            rounded_top(bounds, theme::RADIUS_PANEL).addClip();
+            // The panel ground. While the shelf's material is on (the live
+            // window) this is mostly transparent and the desktop shows
+            // through; a snapshot paints it opaque.
+            theme::ground_over_material().setFill();
+            objc2_app_kit::NSRectFill(bounds);
+            // Sidebar: one step recessed, closed off by a hairline rather
+            // than by a painted band with a hand-torn edge.
+            theme::ground_deep().setFill();
             NSBezierPath::bezierPathWithRect(CGRect::new(
                 CGPoint::ZERO,
                 CGSize::new(SIDEBAR_W, bounds.size.height),
             ))
             .fill();
-            theme::on_brown()
-                .colorWithAlphaComponent(0.28)
-                .setFill();
-            theme::torn_paper_path(
-                CGRect::new(
-                    CGPoint::new(SIDEBAR_W - 1.5, 0.0),
-                    CGSize::new(1.5, bounds.size.height),
-                ),
-                false, true, false, false, 5, 0.8, 5.0,
-            )
+            theme::separator().setFill();
+            NSBezierPath::bezierPathWithRect(CGRect::new(
+                CGPoint::new(SIDEBAR_W - 1.0, 0.0),
+                CGSize::new(1.0, bounds.size.height),
+            ))
             .fill();
             NSGraphicsContext::restoreGraphicsState_class();
             // Empty hints (spinner is a real NSProgressIndicator subview).
@@ -758,7 +789,7 @@ define_class!(
                         ),
                         &l("正在搜索…"),
                         &theme::serif(15.0, false),
-                        &theme::on_brown_muted(),
+                        &theme::label_tertiary(),
                         None,
                     );
                 }
@@ -777,35 +808,10 @@ define_class!(
     }
 );
 
-/// The top-left / top-right rounded clip (UnevenRoundedRectangle 14).
-/// Both arcs reuse the ticket's proven corner calls (theme.rs ticket
-/// corners 1 and 4, byte-verified against the Swift runtime).
+/// The shelf's top-corner clip: the panel rounds its top edge only, the
+/// bottom staying square where it meets the screen edge.
 fn rounded_top(r: CGRect, radius: f64) -> Retained<NSBezierPath> {
-    let (x0, y0) = (r.min().x, r.min().y);
-    let (x1, y1) = (r.max().x, r.max().y);
-    let p = NSBezierPath::new();
-    p.moveToPoint(CGPoint::new(x0, y1));
-    p.lineToPoint(CGPoint::new(x0, y0 + radius));
-    // Top-left: left edge → top edge (ticket corner 4).
-    p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
-        CGPoint::new(x0 + radius, y0 + radius),
-        radius,
-        180.0,
-        270.0,
-        false,
-    );
-    p.lineToPoint(CGPoint::new(x1 - radius, y0));
-    // Top-right: top edge → right edge (ticket corner 1).
-    p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
-        CGPoint::new(x1 - radius, y0 + radius),
-        radius,
-        -90.0,
-        0.0,
-        false,
-    );
-    p.lineToPoint(CGPoint::new(x1, y1));
-    p.closePath();
-    p
+    theme::rounded_rect_corners(r, radius, theme::Corners::TOP)
 }
 
 /// 「还没有内容…」 with today's capture shortcut filled in.
@@ -826,7 +832,7 @@ fn empty_hint(bounds: CGRect, icon: &str, text: &str) {
         icon,
         34.0,
         SymbolWeight::Light,
-        &theme::on_brown_muted().colorWithAlphaComponent(0.7),
+        &theme::label_tertiary().colorWithAlphaComponent(0.7),
     ) {
         let sz = img.size();
         card::draw_centered(
@@ -847,7 +853,7 @@ fn empty_hint(bounds: CGRect, icon: &str, text: &str) {
         ),
         text,
         &font,
-        &theme::on_brown_muted(),
+        &theme::label_tertiary(),
         None,
     );
 }
@@ -899,7 +905,7 @@ define_class!(
                 CGRect::new(CGPoint::new(22.0, 10.0), CGSize::new(SIDEBAR_W - 22.0, card::line_height(&brand_font))),
                 crate::app::brand::BRAND,
                 &brand_font,
-                &theme::on_brown(),
+                &theme::label(),
                 None,
             );
             let rows_top = 10.0 + card::line_height(&brand_font) + 22.0;
@@ -908,15 +914,16 @@ define_class!(
                 let row_y = rows_top + i as f64 * 60.0;
                 let center_y = row_y + 30.0;
                 if i == active {
-                    // PaperPatch: torn blue sheet off the left edge, soft shadow.
-                    let patch = CGRect::new(CGPoint::new(6.0, row_y), CGSize::new(SIDEBAR_W - 16.0, 60.0));
-                    NSGraphicsContext::saveGraphicsState_class();
-                    card::shadow(&NSColor::blackColor().colorWithAlphaComponent(0.4), 5.0, 1.0, 3.0).set();
-                    NSColor::colorWithPatternImage(&theme::paper_blue_tile()).setFill();
-                    theme::torn_paper_path(patch, true, true, true, true, 11, 2.2, 7.0).fill();
-                    NSGraphicsContext::restoreGraphicsState_class();
+                    // Selection: the accent chip, inset inside the sidebar.
+                    let patch = CGRect::new(CGPoint::new(6.0, row_y), CGSize::new(SIDEBAR_W - 12.0, 60.0));
+                    theme::accent().setFill();
+                    theme::rounded_rect(patch, theme::RADIUS_CONTROL).fill();
                 }
-                let tint = if i == active { theme::ink() } else { theme::on_brown() };
+                let tint = if i == active {
+                    NSColor::alternateSelectedControlTextColor()
+                } else {
+                    theme::label()
+                };
                 let mut x = 22.0;
                 if let Some(img) = card::symbol(icon, 17.0, SymbolWeight::Regular, &tint) {
                     let isz = img.size();
@@ -1020,28 +1027,20 @@ define_class!(
             let count_font = theme::serif(16.0, false);
             let active = *self.ivars().filter.borrow();
             let counts = *self.ivars().counts.borrow();
-            for (i, f) in ShelfFilter::ALL.into_iter().enumerate() {
+            for (_i, f) in ShelfFilter::ALL.into_iter().enumerate() {
                 let name = tab_name(f);
                 let nw = card::measure(&name, &name_font, 400.0, None).width;
                 let cw = card::measure(&counts.get(f).to_string(), &count_font, 100.0, None).width;
                 let tab_w = 40.0 + nw + 18.0 + cw;
                 let rect = CGRect::new(CGPoint::new(x, 12.0), CGSize::new(tab_w, 40.0));
                 if f == active {
-                    // Active tab: torn blue scrap (vertical inset 1).
+                    // Selected segment: an accent-tinted pill. Unselected
+                    // segments carry no chrome at all.
                     let patch = CGRect::new(CGPoint::new(x, 13.0), CGSize::new(tab_w, 38.0));
-                    NSGraphicsContext::saveGraphicsState_class();
-                    card::shadow(&NSColor::blackColor().colorWithAlphaComponent(0.4), 5.0, 1.0, 3.0).set();
-                    NSColor::colorWithPatternImage(&theme::paper_blue_tile()).setFill();
-                    theme::torn_paper_path(patch, true, true, true, true, 23 + i as u64, 2.0, 7.0).fill();
-                    NSGraphicsContext::restoreGraphicsState_class();
-                } else {
-                    // Hand-ruled box: left, bottom, right — no top edge.
-                    theme::on_brown().colorWithAlphaComponent(0.5).setStroke();
-                    let p = theme::ruled_box_path(rect, 40 + i as u64, 0.9);
-                    p.setLineWidth(1.0);
-                    p.stroke();
+                    theme::accent_tint().setFill();
+                    theme::rounded_rect(patch, 19.0).fill();
                 }
-                let tint = if f == active { theme::ink() } else { theme::on_brown() };
+                let tint = if f == active { theme::accent() } else { theme::label_secondary() };
                 card::draw_line_centered(&name, &name_font, &tint, x + 20.0, 32.0, nw + 1.0);
                 card::draw_line_centered(
                     &counts.get(f).to_string(),
@@ -1057,7 +1056,7 @@ define_class!(
             *self.ivars().tabs.borrow_mut() = tabs;
             // Search group: magnifier, field, clear; torn stroke around.
             let gx = w - 440.0;
-            if let Some(img) = card::symbol("magnifyingglass", 14.0, SymbolWeight::Regular, &theme::on_brown_muted()) {
+            if let Some(img) = card::symbol("magnifyingglass", 14.0, SymbolWeight::Regular, &theme::label_tertiary()) {
                 let sz = img.size();
                 card::draw_image(
                     &img,
@@ -1074,7 +1073,7 @@ define_class!(
             }
             let has_query = !self.ivars().query.borrow().is_empty();
             if has_query {
-                if let Some(img) = card::symbol("xmark.circle.fill", 17.0, SymbolWeight::Regular, &theme::on_brown_muted()) {
+                if let Some(img) = card::symbol("xmark.circle.fill", 17.0, SymbolWeight::Regular, &theme::label_tertiary()) {
                     let sz = img.size();
                     card::draw_image(
                         &img,
@@ -1090,15 +1089,15 @@ define_class!(
             } else {
                 *self.ivars().clear_hit.borrow_mut() = CGRect::ZERO;
             }
-            theme::on_brown().colorWithAlphaComponent(0.45).setStroke();
-            let stroke = theme::torn_paper_path(
+            theme::separator().setStroke();
+            let stroke = theme::rounded_rect(
                 CGRect::new(CGPoint::new(gx, 12.0), CGSize::new(400.0, 40.0)),
-                true, true, true, true, 31, 0.7, 6.0,
+                theme::RADIUS_CONTROL,
             );
             stroke.setLineWidth(1.0);
             stroke.stroke();
             // Close button.
-            if let Some(img) = card::symbol("xmark", 15.0, SymbolWeight::Regular, &theme::on_brown()) {
+            if let Some(img) = card::symbol("xmark", 15.0, SymbolWeight::Regular, &theme::label()) {
                 let sz = img.size();
                 card::draw_image(
                     &img,
@@ -1504,7 +1503,7 @@ fn tint_caret(field: &NSTextField) {
     if let Some(editor) = field.currentEditor() {
         unsafe {
             let text_view: &NSTextView = &*(Retained::as_ptr(&editor) as *const NSTextView);
-            text_view.setInsertionPointColor(Some(&theme::paper_blue()));
+            text_view.setInsertionPointColor(Some(&theme::accent()));
         }
     }
 }
@@ -1787,7 +1786,7 @@ define_class!(
                 CGRect::new(CGPoint::new(w - 14.0, 8.0), CGSize::new(14.0, 14.0)),
             );
             for (r, name) in [(&lc, "chevron.left"), (&rc, "chevron.right")] {
-                if let Some(img) = card::symbol(name, 13.0, SymbolWeight::Regular, &theme::on_brown_muted()) {
+                if let Some(img) = card::symbol(name, 13.0, SymbolWeight::Regular, &theme::label_tertiary()) {
                     card::draw_centered(&img, *r, 1.0);
                 }
             }
@@ -1803,7 +1802,7 @@ define_class!(
                 (CGRect::new(CGPoint::new(geo.min().x, center_y - 1.5), CGSize::new(geo.size.width, 3.0)), 0.10),
                 (CGRect::new(CGPoint::new(geo.min().x + travel * fraction, center_y - 1.5), CGSize::new(thumb, 3.0)), 0.5),
             ] {
-                theme::on_brown().colorWithAlphaComponent(alpha).setFill();
+                theme::label().colorWithAlphaComponent(alpha).setFill();
                 NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 1.5, 1.5).fill();
             }
         }

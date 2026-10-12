@@ -1,19 +1,34 @@
-//! Port of `App/Theme.swift` (M2 slice A: the full paper theme) plus the two
-//! shape helpers from `Shelf/ShelfView.swift` (`TornPaper`, `RuledBox`) and
-//! `Shelf/ClipCardView.swift` (`TicketShape`, `Line`).
+//! One place for the look: a native macOS visual language — dynamic
+//! surfaces, system type, continuous-corner shapes.
 //!
-//! One place for the look: brown desk, cream paper, light-blue accent, ink
-//! type. Values are copied one-for-one from Swift; do not eyeball-tune.
+//! 1.0.7 replaces the stationery skin this file used to port from
+//! `App/Theme.swift`. That skin was copied from the frozen Swift target
+//! value for value (brown desk, cream paper, torn edges, handwritten
+//! type), which made the two builds visually identical — the opposite of
+//! what an independent product needs — and it had no dark mode at all.
+//! `Sources/Pastory/` stays the behaviour baseline for geometry and
+//! interaction; the *look* now lives here alone and is deliberately
+//! different.
 //!
-//! Coordinate note: the Swift shelf draws these shapes in SwiftUI (y grows
-//! downwards). NSBezierPath itself carries no flip state — the geometry here
-//! matches the Swift path coordinates point for point, and the shelf slice
-//! decides flip at draw time. Arc direction (`clockwise:`) needs no remap:
-//! `Path.addArc` and `NSBezierPath.appendBezierPathWithArcWithCenter:` take the
-//! same degrees, same origin at +x, same clockwise sense — verified by building
-//! TicketShape both ways and diffing every CGPath element (curve control
-//! points included): identical except NSBezierPath appends one degenerate
-//! trailing moveTo after close. See `ticket_matches_swift_reference` below.
+//! Colour comes from AppKit's semantic palette (`labelColor`,
+//! `controlBackgroundColor`, `separatorColor`, `controlAccentColor` …):
+//! each resolves against the current appearance when it is drawn, so light
+//! and dark both work with no second code path and no literal colour
+//! values. Text is the system UI font, so it follows the user's text-size
+//! setting. The brand face survives only as the wordmark and card titles
+//! (`script` / `brand_font`).
+//!
+//! Naming note: `serif` and the `paper*` names are kept where a rename
+//! would touch a hundred call sites with no behaviour change, but nothing
+//! here is serif or paper any more — `serif` is the body face (system UI),
+//! and the shapes have continuous corners.
+//!
+//! The panel rides on a real `NSVisualEffectView` material
+//! (`shelf::view::build`), so the desktop tints it and the window reads as a
+//! native macOS surface. A material is composited by the window server and
+//! cannot appear in an offscreen snapshot, so `panel_material_alpha` is the
+//! one switch that turns the translucency on for a live window and off for
+//! the render self-tests — one drawing path serves both.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -24,15 +39,14 @@ use objc2::runtime::AnyObject;
 use objc2::AnyThread;
 use objc2_app_kit::{
     NSBezierPath, NSColor, NSCompositingOperation, NSFont, NSFontDescriptor, NSFontWeightBold,
-    NSFontWeightMedium, NSFontWeightRegular, NSGraphicsContext, NSImage, NSImageRep, NSRectFill,
-    NSRectFillUsingOperation, NSShadow, NSView, NSWorkspace,
+    NSFontWeightMedium, NSFontWeightRegular, NSFontWeightSemibold, NSGraphicsContext, NSImage,
+    NSImageRep, NSRectFill, NSRectFillUsingOperation, NSShadow, NSView, NSWorkspace,
 };
-use objc2_core_foundation::{CFData, CFRetained, CGRect, CGPoint, CGSize};
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    CGBitmapContextCreate, CGBitmapContextCreateImage, CGBitmapInfo, CGColorRenderingIntent,
-    CGColorSpace, CGContext, CGDataProvider, CGImage, CGImageAlphaInfo,
+    CGBitmapContextCreate, CGBitmapContextCreateImage, CGColorSpace, CGImage,
 };
-use objc2_foundation::{ns_string, NSArray, NSDictionary, NSString};
+use objc2_foundation::{ns_string, NSDictionary, NSString};
 
 /// Where resources live. A normal launch: the bundle's Resources. A dev run /
 /// self-test (`cargo run`, the bare binary): `<repo>/rust/target/…/pastory`
@@ -103,13 +117,6 @@ pub fn logo() -> Option<Retained<NSImage>> {
     cached_named_image(&CELL, "Logo.png")
 }
 
-/// The one piece of stationery: a pink pushpin on the card that is currently
-/// on the clipboard.
-pub fn pushpin() -> Option<Retained<NSImage>> {
-    static CELL: OnceLock<Option<usize>> = OnceLock::new();
-    cached_named_image(&CELL, "Pushpin.png")
-}
-
 /// Menu bar glyph (designer's folded-P asset, 1x + 2x). Template: macOS tints
 /// it for light / dark menu bars — the app itself never switches colors.
 pub fn menu_icon() -> Option<Retained<NSImage>> {
@@ -147,16 +154,16 @@ unsafe fn base_reps(img: &NSImage) -> Vec<Retained<NSImageRep>> {
     reps.to_vec()
 }
 
-/// Brand typeface (Ysabeau Office, OFL; Caveat for the script) bundled in
-/// Resources/Fonts; registered for this process on first use. True when any
-/// face registered — the M0 spike for CTFontManagerRegisterFontsForURL.
+/// Brand typeface (Ysabeau Office, OFL) bundled in Resources/Fonts;
+/// registered for this process on first use. True when any face registered —
+/// the M0 spike for CTFontManagerRegisterFontsForURL.
 pub fn register_brand_fonts() -> bool {
     static DONE: OnceLock<bool> = OnceLock::new();
     *DONE.get_or_init(|| {
         use objc2_core_foundation::{CFString, CFURL, CFURLPathStyle};
         use objc2_core_text::{CTFontManagerRegisterFontsForURL, CTFontManagerScope};
         let mut any = false;
-        for name in ["YsabeauOffice.ttf", "Caveat.ttf"] {
+        for name in ["YsabeauOffice.ttf"] {
             for dir in font_dirs() {
                 let path = dir.join(name);
                 if !path.is_file() {
@@ -202,8 +209,9 @@ fn font_dirs() -> Vec<PathBuf> {
 
 // MARK: SplitMix64 (Annotate/AnnotationRenderer.swift:241)
 
-/// Tiny deterministic generator (SplitMix64) so a shape's wobble never changes
-/// between frames. Bit-identical with the Swift `Seeded`.
+/// Tiny deterministic generator (SplitMix64) so a sketch's wobble never
+/// changes between frames. Bit-identical with the Swift `Seeded`; the
+/// annotation sketcher is its remaining user.
 pub struct Seeded(pub u64);
 
 impl Seeded {
@@ -214,19 +222,9 @@ impl Seeded {
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
     }
-
-    /// `TornPaper.jitter` / `RuledBox.j`: the modulo lands on the integer
-    /// first, exactly like Swift's `Double(g.next() % 1000) / 1000.0 - 0.5`.
-    fn jitter(&mut self, amplitude: f64) -> f64 {
-        ((self.next() % 1000) as f64 / 1000.0 - 0.5) * 2.0 * amplitude
-    }
 }
 
-// MARK: Palette (Theme.swift:7-18,140-141)
-
-fn srgb(red: f64, green: f64, blue: f64, alpha: f64) -> Retained<NSColor> {
-    NSColor::colorWithSRGBRed_green_blue_alpha(red, green, blue, alpha)
-}
+// MARK: Palette — AppKit semantic colours only
 
 /// sRGB from 0-255 octets (annotation palette constants).
 pub fn srgb_octets(red: u8, green: u8, blue: u8) -> Retained<NSColor> {
@@ -238,62 +236,74 @@ pub fn srgb_octets(red: u8, green: u8, blue: u8) -> Retained<NSColor> {
     )
 }
 
-/// Legacy accent still used by the annotation palette's first swatch.
+/// Legacy accent still used by the annotation palette's first swatch. The
+/// annotation palette is a tool palette, not the app's skin: it keeps its
+/// own fixed colours so a drawn stroke looks the same on any screenshot.
 pub fn purple() -> Retained<NSColor> {
-    srgb(0.71, 0.64, 0.95, 1.0) // #B5A3F2
+    srgb_octets(0xB5, 0xA3, 0xF2)
 }
 
-/// Paper theme ground: dark brown.
-pub fn brown() -> Retained<NSColor> {
-    srgb(0.17, 0.13, 0.12, 1.0) // #2B211E
+/// Panel / window ground, behind everything the user sees.
+pub fn ground() -> Retained<NSColor> {
+    NSColor::windowBackgroundColor()
 }
 
-pub fn brown_deep() -> Retained<NSColor> {
-    srgb(0.14, 0.11, 0.10, 1.0) // #241C19
+/// A recessed ground: the sidebar and other inset bands. Translucent so it
+/// reads as depth over the panel material rather than a painted rectangle.
+pub fn ground_deep() -> Retained<NSColor> {
+    NSColor::underPageBackgroundColor().colorWithAlphaComponent(0.65)
 }
 
-pub fn paper() -> Retained<NSColor> {
-    srgb(0.95, 0.93, 0.89, 1.0) // #F2EDE3
+/// Card / sheet face.
+pub fn surface() -> Retained<NSColor> {
+    NSColor::controlBackgroundColor()
 }
 
-pub fn paper_dim() -> Retained<NSColor> {
-    srgb(0.90, 0.87, 0.82, 1.0) // #E6DFD1
+/// One step off the card face: toggle tracks, unfilled chips, wells.
+pub fn surface_alt() -> Retained<NSColor> {
+    NSColor::underPageBackgroundColor()
 }
 
-pub fn paper_blue() -> Retained<NSColor> {
-    srgb(0.74, 0.84, 0.90, 1.0) // #BDD6E5
+/// Primary text and glyphs.
+pub fn label() -> Retained<NSColor> {
+    NSColor::labelColor()
 }
 
-pub fn paper_blue_deep() -> Retained<NSColor> {
-    srgb(0.50, 0.65, 0.74, 1.0) // #7FA5BD
+/// Secondary copy, captions, inactive glyphs.
+pub fn label_secondary() -> Retained<NSColor> {
+    NSColor::secondaryLabelColor()
 }
 
-pub fn ink() -> Retained<NSColor> {
-    srgb(0.16, 0.14, 0.13, 1.0) // #2A2521
+/// Faintest tier: hints, disabled chrome, empty-state copy.
+pub fn label_tertiary() -> Retained<NSColor> {
+    NSColor::tertiaryLabelColor()
 }
 
-pub fn ink_muted() -> Retained<NSColor> {
-    srgb(0.43, 0.40, 0.37, 1.0) // #6E665F
+/// Hairlines, card edges, dividers.
+pub fn separator() -> Retained<NSColor> {
+    NSColor::separatorColor()
 }
 
-/// Text on the brown ground.
-pub fn on_brown() -> Retained<NSColor> {
-    srgb(0.93, 0.90, 0.86, 1.0)
+/// The system accent (user-chosen, blue by default): text, glyphs, borders
+/// and selection.
+pub fn accent() -> Retained<NSColor> {
+    NSColor::controlAccentColor()
 }
 
-pub fn on_brown_muted() -> Retained<NSColor> {
-    srgb(0.68, 0.63, 0.59, 1.0)
+/// A soft accent wash for fills behind text — the accent at low alpha so the
+/// same value works as a pale tint in light mode and a deep tint in dark.
+pub fn accent_tint() -> Retained<NSColor> {
+    NSColor::controlAccentColor().colorWithAlphaComponent(0.18)
 }
 
-/// Faint ink outline on paper.
-pub fn paper_line() -> Retained<NSColor> {
-    srgb(0.16, 0.14, 0.13, 0.28)
-}
+/// Card corner radius, on the panel's nested scale.
+pub const RADIUS_CARD: f64 = 10.0;
+/// Panel corner radius (the shelf's top corners).
+pub const RADIUS_PANEL: f64 = 12.0;
+/// Chips, wells and other small controls.
+pub const RADIUS_CONTROL: f64 = 6.0;
 
-/// Card corner radius (`Theme.paperRadius`).
-pub const PAPER_RADIUS: f64 = 6.0;
-
-// MARK: Fonts (Theme.swift:21-39, Annotate/Annotation.swift:44)
+// MARK: Fonts
 
 /// One process-wide cache for every Theme font (Swift `fontCache`).
 fn cached_font(key: &str, make: impl FnOnce() -> Retained<NSFont>) -> Retained<NSFont> {
@@ -316,35 +326,35 @@ fn size_key(size: f64) -> String {
     format!("{:?}", size)
 }
 
-/// Serif for the paper theme (Songti SC covers CJK and Latin). Swift signature
-/// is `serif(size:bold:)` with `bold = false` by default.
+/// The system UI font at `size`, in the given weight — the body face
+/// everywhere. Following the system font is what makes the UI honour the
+/// user's text-size setting and Localized / Accessibility overrides.
+fn ui_font(size: f64, weight: f64) -> Retained<NSFont> {
+    NSFont::systemFontOfSize_weight(size, weight)
+}
+
+/// Body face. Kept under its old name because a hundred call sites say
+/// `serif`; there is no serif left in this design.
 pub fn serif(size: f64, bold: bool) -> Retained<NSFont> {
-    let key = format!("serif{}{}", if bold { "b" } else { "" }, size_key(size));
+    let key = format!("body{}{}", if bold { "b" } else { "" }, size_key(size));
     cached_font(&key, || {
-        let name = if bold { "STSongti-SC-Bold" } else { "STSongti-SC-Regular" };
-        match NSFont::fontWithName_size(&NSString::from_str(name), size) {
-            Some(f) => f,
-            None => NSFont::systemFontOfSize_weight(
-                size,
-                // SAFETY: stable extern constants.
-                unsafe {
-                    if bold { NSFontWeightBold } else { NSFontWeightRegular }
-                },
-            ),
-        }
+        // SAFETY: stable extern constants.
+        let w = unsafe {
+            if bold {
+                NSFontWeightBold
+            } else {
+                NSFontWeightRegular
+            }
+        };
+        ui_font(size, w)
     })
 }
 
-/// 翩翩体 covers Latin too (Annotate HandFont); Theme's fallback when the
-/// Caveat descriptor resolves to nothing.
-fn hand_font(size: f64) -> Retained<NSFont> {
-    for name in ["HanziPenSC-W5", "HannotateSC-W5"] {
-        if let Some(f) = NSFont::fontWithName_size(&NSString::from_str(name), size) {
-            return f;
-        }
-    }
+/// Semibold body face — section headings and emphasised labels.
+pub fn semibold(size: f64) -> Retained<NSFont> {
+    let key = format!("semibold{}", size_key(size));
     // SAFETY: stable extern constant.
-    NSFont::systemFontOfSize_weight(size, unsafe { NSFontWeightMedium })
+    cached_font(&key, || ui_font(size, unsafe { NSFontWeightSemibold }))
 }
 
 /// `NSFontDescriptor(fontAttributes:)` — the attributes dictionary types as
@@ -366,26 +376,23 @@ fn descriptor_with_attributes(
     unsafe { NSFontDescriptor::fontDescriptorWithFontAttributes(Some(&dict)) }
 }
 
-/// Handwritten script: Caveat for Latin, falling back to 翩翩体 for CJK.
+/// Brand wordmark face: Ysabeau Office when it registered, else the system
+/// medium weight. The bundled file is a variable font, so it resolves through
+/// its FAMILY name — the PostScript name "YsabeauOffice-Regular" matches no
+/// face and would silently fall back to the system font. CJK glyphs land on
+/// the system face through the normal cascade.
 pub fn script(size: f64) -> Retained<NSFont> {
     register_brand_fonts();
-    let key = format!("script{}", size_key(size));
+    let key = format!("brand{}", size_key(size));
     cached_font(&key, || {
-        let cjk = descriptor_with_attributes(&[(ns_string!("NSFontNameAttribute"), any_from_nsstring("HanziPenSC-W5"))]);
-        let cascade: Retained<NSArray<NSFontDescriptor>> = NSArray::from_slice(&[&*cjk]);
-        let d = descriptor_with_attributes(&[
-            (ns_string!("NSFontNameAttribute"), any_from_nsstring("Caveat-Regular")),
-            // SAFETY: upcasting an NSArray object to AnyObject for the erased
-            // value slot — ObjC objects share layout; nothing is converted.
-            (
-                ns_string!("NSFontCascadeListAttribute"),
-                unsafe { Retained::cast_unchecked::<AnyObject>(cascade) },
-            ),
-        ]);
-        match NSFont::fontWithDescriptor_size(&d, size) {
-            Some(f) => f,
-            None => hand_font(size),
-        }
+        let d = descriptor_with_attributes(&[(
+            ns_string!("NSFontNameAttribute"),
+            any_from_nsstring("Ysabeau Office"),
+        )]);
+        let face = NSFont::fontWithDescriptor_size(&d, size).filter(|f| {
+            f.familyName().map(|n| n.to_string()).as_deref() == Some("Ysabeau Office")
+        });
+        face.unwrap_or_else(|| ui_font(size, unsafe { NSFontWeightMedium }))
     })
 }
 
@@ -396,92 +403,20 @@ fn any_from_nsstring(s: &str) -> Retained<AnyObject> {
     unsafe { Retained::cast_unchecked::<AnyObject>(s) }
 }
 
-/// Brand wordmark: the handwritten script (`Theme.brandFont`).
+/// Brand wordmark (`Theme.brandFont`).
 pub fn brand_font(size: f64) -> Retained<NSFont> {
     script(size)
 }
 
-// MARK: Grain (Theme.swift:42-71,143-194)
+// MARK: Surfaces
 
-/// Tile edge in pixels — `noiseTile` is 96×96.
-const NOISE_N: usize = 96;
-
-/// `CGImageAlphaInfo.premultipliedLast` for the offscreen bitmaps.
-const PREMULTIPLIED_LAST: u32 = 1;
-
-/// Faint grain, tiled over paper and ground so nothing looks flat.
-pub fn noise_tile() -> Retained<NSImage> {
-    static CELL: OnceLock<usize> = OnceLock::new();
-    let ptr = *CELL.get_or_init(|| {
-        let img = make_noise_tile().expect("noise tile CGImageCreate of static bytes");
-        Retained::into_raw(img) as usize
-    });
-    // SAFETY: the reference was into_raw'd once above; adds the caller's retain.
-    unsafe { Retained::retain(ptr as *mut NSImage) }.expect("noise tile cached")
-}
-
-/// `Theme.noiseTile`: 96×96 grey noise from `Seeded(20260912)`, one channel
-/// replicated, alpha 255.
-fn make_noise_tile() -> Option<Retained<NSImage>> {
-    let mut bytes = vec![0u8; NOISE_N * NOISE_N * 4];
-    let mut g = Seeded(20260912);
-    let mut i = 0;
-    while i < bytes.len() {
-        let v = (g.next() % 256) as u8;
-        bytes[i] = v;
-        bytes[i + 1] = v;
-        bytes[i + 2] = v;
-        bytes[i + 3] = 255;
-        i += 4;
-    }
-    let data = CFData::from_bytes(&bytes);
-    let provider = CGDataProvider::with_cf_data(Some(&data))?;
-    let space = CGColorSpace::new_device_rgb();
-    // SAFETY: plain CG constructor over the byte buffer; parameters mirror
-    // the Swift CGImage(width:…) call exactly.
-    let cg = unsafe {
-        CGImage::new(
-            NOISE_N,
-            NOISE_N,
-            8,
-            32,
-            NOISE_N * 4,
-            space.as_deref(),
-            CGBitmapInfo(CGImageAlphaInfo::NoneSkipLast.0),
-            Some(&provider),
-            std::ptr::null(),
-            false,
-            CGColorRenderingIntent::RenderingIntentDefault,
-        )?
-    };
-    Some(NSImage::initWithCGImage_size(
-        NSImage::alloc(),
-        &cg,
-        CGSize::new(NOISE_N as f64, NOISE_N as f64),
-    ))
-}
-
-/// Draw into a fresh offscreen bitmap and hand back what the Swift
-/// `NSImage(size:flipped:drawingHandler:)` idiom produced: a 1x bitmap-backed
-/// image. The Swift handler versions are NSCustomImageReps that re-render into
-/// the destination's coordinate space on every use (verified:
-/// `pixelsWide == 0`). A frozen bitmap cannot reproduce one thing: AppKit
-/// renders the custom rep y-down, so the handler's CG pattern grain anchors
-/// at the visual top, while a direct y-up CGBitmapContext render anchors the
-/// same phase at the buffer bottom. The pipe's pattern phase lives in CG base
-/// space (the NSGraphicsContext flipped flag does not move it), so the baked
-/// tiles correct this with one explicit flip pass — see `baked_tile`. Only
-/// the tiles bother: a fill is uniform and the grain is directionless grey,
-/// but byte-identical costs one redraw.
-fn offscreen_image(size: CGSize, draw: impl FnOnce(CGRect)) -> Option<Retained<NSImage>> {
-    let cg = offscreen_cg(size, draw)?;
-    Some(NSImage::initWithCGImage_size(NSImage::alloc(), &cg, size))
-}
-
-fn offscreen_cg(size: CGSize, draw: impl FnOnce(CGRect)) -> Option<CFRetained<CGImage>> {
+/// Draw into a fresh offscreen bitmap (app-icon greying, snapshot fixtures).
+/// The Swift `NSImage(size:flipped:drawingHandler:)` idiom, baked to 1x.
+fn offscreen_cg(size: CGSize, draw: impl FnOnce(CGRect)) -> Option<objc2_core_foundation::CFRetained<CGImage>> {
     // Device RGB matches the Swift contexts (CGColorSpaceCreateDeviceRGB).
     let space = CGColorSpace::new_device_rgb();
-    // SAFETY: `data` is null (the context allocates its own buffer).
+    // SAFETY: `data` is null (the context allocates its own buffer);
+    // bitmapInfo 1 is premultipliedLast, as in the Swift contexts.
     let ctx = unsafe {
         CGBitmapContextCreate(
             std::ptr::null_mut(),
@@ -490,7 +425,7 @@ fn offscreen_cg(size: CGSize, draw: impl FnOnce(CGRect)) -> Option<CFRetained<CG
             8,
             0,
             space.as_deref(),
-            PREMULTIPLIED_LAST,
+            1,
         )?
     };
     let gc = NSGraphicsContext::graphicsContextWithCGContext_flipped(&ctx, false);
@@ -501,300 +436,171 @@ fn offscreen_cg(size: CGSize, draw: impl FnOnce(CGRect)) -> Option<CFRetained<CG
     CGBitmapContextCreateImage(Some(&ctx))
 }
 
-/// `Theme.bakedTile` — paper / desk with the grain already multiplied in.
-/// SwiftUI tiles these as `ImagePaint`; a live `blendMode(.multiply)` per card
-/// forced an offscreen pass for every card on every frame.
-fn baked_tile(color: &NSColor, grain: f64) -> Retained<NSImage> {
-    let size = CGSize::new(NOISE_N as f64, NOISE_N as f64);
-    let cg = offscreen_cg(size, |r| {
-        color.setFill();
-        NSRectFill(r);
-        draw_grain(r, grain);
-    })
-    .expect("offscreen bake of a static 96×96 tile");
-    let cg = vflip(size, &cg).expect("same-size redraw of a CGImage");
-    NSImage::initWithCGImage_size(NSImage::alloc(), &cg, size)
-}
-
-/// Vertical mirror via a CTM flip (CTM moves images, unlike pattern phase):
-/// makes the frozen bake byte-identical to Swift's y-down custom-rep render.
-fn vflip(size: CGSize, image: &CGImage) -> Option<CFRetained<CGImage>> {
-    let space = CGColorSpace::new_device_rgb();
-    // SAFETY: `data` is null (the context allocates its own buffer).
-    let ctx = unsafe {
-        CGBitmapContextCreate(
-            std::ptr::null_mut(),
-            size.width as usize,
-            size.height as usize,
-            8,
-            0,
-            space.as_deref(),
-            PREMULTIPLIED_LAST,
-        )?
-    };
-    CGContext::translate_ctm(Some(&ctx), 0.0, size.height);
-    CGContext::scale_ctm(Some(&ctx), 1.0, -1.0);
-    CGContext::draw_image(Some(&ctx), CGRect::new(CGPoint::ZERO, size), Some(image));
-    CGBitmapContextCreateImage(Some(&ctx))
-}
-
-fn cached_tile(cell: &OnceLock<usize>, color: &NSColor, grain: f64) -> Retained<NSImage> {
-    let ptr = *cell.get_or_init(|| Retained::into_raw(baked_tile(color, grain)) as usize);
-    // SAFETY: the reference was into_raw'd once above; adds the caller's retain.
-    unsafe { Retained::retain(ptr as *mut NSImage) }.expect("tile cached")
-}
-
-/// `Theme.paperTile` (grain 0.11).
-pub fn paper_tile() -> Retained<NSImage> {
-    static CELL: OnceLock<usize> = OnceLock::new();
-    cached_tile(&CELL, &paper(), 0.11)
-}
-
-/// `Theme.paperBlueTile` (grain 0.11).
-pub fn paper_blue_tile() -> Retained<NSImage> {
-    static CELL: OnceLock<usize> = OnceLock::new();
-    cached_tile(&CELL, &paper_blue(), 0.11)
-}
-
-/// `Theme.deskTile` (grain 0.22).
-pub fn desk_tile() -> Retained<NSImage> {
-    static CELL: OnceLock<usize> = OnceLock::new();
-    cached_tile(&CELL, &brown(), 0.22)
-}
-
-/// Grain: multiply the noise tile over whatever was just painted. Draws into
-/// the current NSGraphicsContext (shelf cards and window grounds call this
-/// inside their drawRect).
-pub fn draw_grain(r: CGRect, opacity: f64) {
-    NSGraphicsContext::saveGraphicsState_class();
-    if let Some(gc) = NSGraphicsContext::currentContext() {
-        gc.setCompositingOperation(NSCompositingOperation::Multiply);
-        let cg = gc.CGContext();
-        CGContext::set_alpha(Some(&cg), opacity);
-    }
-    NSColor::colorWithPatternImage(&noise_tile()).setFill();
-    NSBezierPath::bezierPathWithRect(r).fill();
-    NSGraphicsContext::restoreGraphicsState_class();
-}
-
-/// A sheet of paper: fill, grain, hairline ink edge — clipped to `path`.
-/// Swift's default fill is `paper`.
-pub fn draw_paper(path: &NSBezierPath, fill: &NSColor) {
-    NSGraphicsContext::saveGraphicsState_class();
-    path.addClip();
+/// A sheet / card / panel face: solid fill plus a hairline edge.
+pub fn draw_surface(path: &NSBezierPath, fill: &NSColor) {
     fill.setFill();
-    NSRectFill(path.bounds());
-    draw_grain(path.bounds(), 0.045);
-    NSGraphicsContext::restoreGraphicsState_class();
-    paper_line().setStroke();
+    path.fill();
+    separator().setStroke();
     path.setLineWidth(1.0);
     path.stroke();
 }
 
-/// Capture chrome: the same brown frosted ground as the shelf, cut into a
-/// strip, with a faint light edge.
+/// Capture chrome and other floating bars: ground fill, hairline edge.
 pub fn draw_desk(path: &NSBezierPath) {
     NSGraphicsContext::saveGraphicsState_class();
     path.addClip();
-    brown().setFill();
+    ground().setFill();
     NSRectFill(path.bounds());
-    draw_grain(path.bounds(), 0.16);
     NSGraphicsContext::restoreGraphicsState_class();
-    on_brown().colorWithAlphaComponent(0.22).setStroke();
+    separator().setStroke();
     path.setLineWidth(1.0);
     path.stroke();
 }
 
-/// The brown desk the paper sits on (window grounds).
+/// The panel ground (window grounds); the live shelf adds a material behind
+/// this in `shelf::panel`.
 pub fn draw_ground(r: CGRect) {
-    brown().setFill();
+    ground().setFill();
     NSRectFill(r);
-    draw_grain(r, 0.16);
 }
 
-/// Paper card with a soft shadow on its layer; `draw_paper` paints the face.
-/// Swift default radius is `paperRadius` (6).
-pub fn paper_sheet(v: &NSView, radius: f64) {
+/// How much of the panel's material shows through the ground: 0.0 paints the
+/// ground opaque (a snapshot), 1.0 leaves it almost entirely to the material
+/// (the live shelf). See the module note on why this exists.
+static PANEL_MATERIAL_ALPHA: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
+pub fn panel_material_alpha() -> f64 {
+    f32::from_bits(PANEL_MATERIAL_ALPHA.load(std::sync::atomic::Ordering::Relaxed)) as f64
+}
+
+/// Turn the panel's glass on (a window) or off (a snapshot).
+pub fn set_panel_material_alpha(a: f64) {
+    PANEL_MATERIAL_ALPHA.store((a as f32).to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The shelf's ground where a material sits behind it. Opaque while the glass
+/// is off, so nothing changes for the render self-tests and the capture
+/// chrome, which all call `draw_ground` instead.
+pub fn ground_over_material() -> Retained<NSColor> {
+    ground().colorWithAlphaComponent(1.0 - 0.85 * panel_material_alpha())
+}
+
+/// Card / sheet layer: one radius, one soft shadow. Swift default radius is
+/// `paperRadius` (6); the new skin passes `RADIUS_CARD` or `RADIUS_CONTROL`.
+pub fn card_layer(v: &NSView, radius: f64) {
     v.setWantsLayer(true);
     if let Some(layer) = v.layer() {
         // SAFETY: ordinary property setter on the view's layer.
         let () = unsafe { objc2::msg_send![&*layer, setCornerRadius: radius] };
     }
     let s = NSShadow::new();
-    s.setShadowColor(Some(&NSColor::colorWithCalibratedWhite_alpha(0.0, 0.4)));
-    s.setShadowBlurRadius(8.0);
-    s.setShadowOffset(CGSize::new(1.0, -4.0));
+    s.setShadowColor(Some(&NSColor::colorWithCalibratedWhite_alpha(0.0, 0.22)));
+    s.setShadowBlurRadius(10.0);
+    s.setShadowOffset(CGSize::new(0.0, -2.0));
     v.setShadow(Some(&s));
 }
 
-// MARK: Shapes (ShelfView.swift:290-359, ClipCardView.swift:368-401)
+/// Round a view's own layer and clip its subviews to it. The panel needs
+/// this: a full-bleed backing (the material) would otherwise square off the
+/// window's rounded silhouette.
+pub fn clip_to_radius(v: &NSView, radius: f64) {
+    v.setWantsLayer(true);
+    if let Some(layer) = v.layer() {
+        // SAFETY: ordinary property setters on the view's layer.
+        unsafe {
+            let () = objc2::msg_send![&*layer, setCornerRadius: radius];
+            let () = objc2::msg_send![&*layer, setMasksToBounds: true];
+        }
+    }
+}
 
-/// A rectangle whose chosen edges are torn: small irregular teeth, fixed per
-/// `seed` so it never shimmers. Swift `TornPaper` defaults: seed 7,
-/// amplitude 3, step 7. The RNG draws are in the Swift order — do not re-sort.
-#[allow(clippy::too_many_arguments)]
-pub fn torn_paper_path(
-    r: CGRect,
-    top: bool,
-    right: bool,
-    bottom: bool,
-    left: bool,
-    seed: u64,
-    amplitude: f64,
-    step: f64,
-) -> Retained<NSBezierPath> {
-    let mut g = Seeded(seed);
-    let (min_x, min_y) = (r.min().x, r.min().y);
-    let (max_x, max_y) = (r.max().x, r.max().y);
+// MARK: Shapes
+
+/// Which corners a rounded path rounds.
+#[derive(Clone, Copy, Debug)]
+pub struct Corners {
+    pub top_left: bool,
+    pub top_right: bool,
+    pub bottom_left: bool,
+    pub bottom_right: bool,
+}
+
+impl Corners {
+    pub const ALL: Corners = Corners {
+        top_left: true,
+        top_right: true,
+        bottom_left: true,
+        bottom_right: true,
+    };
+    pub const TOP: Corners = Corners {
+        top_left: true,
+        top_right: true,
+        bottom_left: false,
+        bottom_right: false,
+    };
+}
+
+/// A rounded rectangle with per-corner control, in flipped (y-down)
+/// coordinates. Continuous corners are the base shape of this skin; the
+/// quarter-arcs below are the same proven calls the old sheet used, so the
+/// geometry is byte-verifiable (`rounded_rect_corners_geometry`).
+pub fn rounded_rect_corners(r: CGRect, radius: f64, c: Corners) -> Retained<NSBezierPath> {
+    let (x0, y0) = (r.min().x, r.min().y);
+    let (x1, y1) = (r.max().x, r.max().y);
     let p = NSBezierPath::new();
-    // top-left → top-right
-    p.moveToPoint(CGPoint::new(min_x, min_y));
-    if top {
-        let mut x = min_x + step;
-        while x < max_x {
-            p.lineToPoint(CGPoint::new(x, min_y + g.jitter(amplitude)));
-            x += step;
-        }
+    // Left edge, starting just below the top-left corner.
+    p.moveToPoint(CGPoint::new(x0, if c.top_left { y0 + radius } else { y0 }));
+    if c.top_left {
+        // left edge → top edge
+        p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
+            CGPoint::new(x0 + radius, y0 + radius),
+            radius,
+            180.0,
+            270.0,
+            false,
+        );
     }
-    p.lineToPoint(CGPoint::new(max_x, min_y));
-    if right {
-        let mut y = min_y + step;
-        while y < max_y {
-            p.lineToPoint(CGPoint::new(max_x + g.jitter(amplitude), y));
-            y += step;
-        }
+    p.lineToPoint(CGPoint::new(if c.top_right { x1 - radius } else { x1 }, y0));
+    if c.top_right {
+        // top edge → right edge
+        p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
+            CGPoint::new(x1 - radius, y0 + radius),
+            radius,
+            -90.0,
+            0.0,
+            false,
+        );
     }
-    p.lineToPoint(CGPoint::new(max_x, max_y));
-    if bottom {
-        let mut x = max_x - step;
-        while x > min_x {
-            p.lineToPoint(CGPoint::new(x, max_y + g.jitter(amplitude)));
-            x -= step;
-        }
+    p.lineToPoint(CGPoint::new(x1, if c.bottom_right { y1 - radius } else { y1 }));
+    if c.bottom_right {
+        // right edge → bottom edge
+        p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
+            CGPoint::new(x1 - radius, y1 - radius),
+            radius,
+            0.0,
+            90.0,
+            false,
+        );
     }
-    p.lineToPoint(CGPoint::new(min_x, max_y));
-    if left {
-        let mut y = max_y - step;
-        while y > min_y {
-            p.lineToPoint(CGPoint::new(min_x + g.jitter(amplitude), y));
-            y -= step;
-        }
+    p.lineToPoint(CGPoint::new(if c.bottom_left { x0 + radius } else { x0 }, y1));
+    if c.bottom_left {
+        // bottom edge → left edge
+        p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
+            CGPoint::new(x0 + radius, y1 - radius),
+            radius,
+            90.0,
+            180.0,
+            false,
+        );
     }
     p.closePath();
     p
 }
 
-/// Three sides of a box drawn by hand: down the left, along the bottom, up the
-/// right. No top; the subpath stays open, like Swift's `RuledBox`. Swift
-/// defaults: seed 1, amplitude 0.9, advance 6.
-pub fn ruled_box_path(r: CGRect, seed: u64, amplitude: f64) -> Retained<NSBezierPath> {
-    let mut g = Seeded(seed);
-    let (min_x, min_y) = (r.min().x, r.min().y);
-    let (max_x, max_y) = (r.max().x, r.max().y);
-    let p = NSBezierPath::new();
-    p.moveToPoint(CGPoint::new(min_x, min_y));
-    let mut y = min_y + 6.0;
-    while y < max_y {
-        p.lineToPoint(CGPoint::new(min_x + g.jitter(amplitude), y));
-        y += 6.0;
-    }
-    p.lineToPoint(CGPoint::new(min_x, max_y));
-    let mut x = min_x + 6.0;
-    while x < max_x {
-        p.lineToPoint(CGPoint::new(x, max_y + g.jitter(amplitude)));
-        x += 6.0;
-    }
-    p.lineToPoint(CGPoint::new(max_x, max_y));
-    let mut y = max_y - 6.0;
-    while y > min_y {
-        p.lineToPoint(CGPoint::new(max_x + g.jitter(amplitude), y));
-        y -= 6.0;
-    }
-    p.lineToPoint(CGPoint::new(max_x, min_y));
-    p
-}
-
-/// Rounded rectangle with a half-circle notch cut into each side,
-/// `notch_from_bottom` up from the bottom edge (odd cards are punched, even
-/// cards are plain). Swift `TicketShape` defaults: radius 5, notch 11.
-///
-/// The Swift `Path.addArc` calls translate one-to-one to
-/// `appendBezierPathWithArcWithCenter:` with the same angles and the same
-/// `clockwise` flags — the two API surfaces agree on angle orientation
-/// (verified element-for-element against the Swift runtime; see module docs).
-pub fn ticket_path(
-    r: CGRect,
-    notch_from_bottom: Option<f64>,
-    radius: f64,
-    notch: f64,
-) -> Retained<NSBezierPath> {
-    let y = notch_from_bottom.map(|v| r.max().y - v);
-    let (min_x, min_y) = (r.min().x, r.min().y);
-    let (max_x, max_y) = (r.max().x, r.max().y);
-    let p = NSBezierPath::new();
-    p.moveToPoint(CGPoint::new(min_x + radius, min_y));
-    p.lineToPoint(CGPoint::new(max_x - radius, min_y));
-    p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
-        CGPoint::new(max_x - radius, min_y + radius),
-        radius,
-        -90.0,
-        0.0,
-        false,
-    );
-    if let Some(y) = y {
-        p.lineToPoint(CGPoint::new(max_x, y - notch));
-        p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
-            CGPoint::new(max_x, y),
-            notch,
-            -90.0,
-            90.0,
-            true,
-        );
-    }
-    p.lineToPoint(CGPoint::new(max_x, max_y - radius));
-    p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
-        CGPoint::new(max_x - radius, max_y - radius),
-        radius,
-        0.0,
-        90.0,
-        false,
-    );
-    p.lineToPoint(CGPoint::new(min_x + radius, max_y));
-    p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
-        CGPoint::new(min_x + radius, max_y - radius),
-        radius,
-        90.0,
-        180.0,
-        false,
-    );
-    if let Some(y) = y {
-        p.lineToPoint(CGPoint::new(min_x, y + notch));
-        p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
-            CGPoint::new(min_x, y),
-            notch,
-            90.0,
-            -90.0,
-            true,
-        );
-    }
-    p.lineToPoint(CGPoint::new(min_x, min_y + radius));
-    p.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise(
-        CGPoint::new(min_x + radius, min_y + radius),
-        radius,
-        180.0,
-        270.0,
-        false,
-    );
-    p.closePath();
-    p
-}
-
-/// Perforation guide: the mid horizontal (`Line` in ClipCardView.swift).
-pub fn line_path(r: CGRect) -> Retained<NSBezierPath> {
-    let p = NSBezierPath::new();
-    p.moveToPoint(CGPoint::new(r.min().x, r.mid().y));
-    p.lineToPoint(CGPoint::new(r.max().x, r.mid().y));
-    p
+/// A rounded rectangle with all four corners rounded.
+pub fn rounded_rect(r: CGRect, radius: f64) -> Retained<NSBezierPath> {
+    rounded_rect_corners(r, radius, Corners::ALL)
 }
 
 // MARK: Card icons (Theme.swift:74-94)
@@ -829,9 +635,10 @@ fn make_card_icon(bundle_id: &str) -> Option<Retained<NSImage>> {
     let path = url.path()?;
     let src = ws.iconForFile(&path);
     src.setSize(CGSize::new(44.0, 44.0));
-    offscreen_image(src.size(), |r| {
+    let size = src.size();
+    let cg = offscreen_cg(size, |r| {
         src.drawInRect(r);
-        // Grey it down so the paper stays quiet, keep the alpha.
+        // Grey it down so the card stays quiet, keep the alpha.
         NSColor::colorWithCalibratedWhite_alpha(0.45, 1.0).set();
         NSRectFillUsingOperation(r, NSCompositingOperation::Color);
         src.drawInRect_fromRect_operation_fraction(
@@ -840,7 +647,8 @@ fn make_card_icon(bundle_id: &str) -> Option<Retained<NSImage>> {
             NSCompositingOperation::DestinationIn,
             1.0,
         );
-    })
+    })?;
+    Some(NSImage::initWithCGImage_size(NSImage::alloc(), &cg, size))
 }
 
 #[cfg(test)]
@@ -850,7 +658,7 @@ mod tests {
 
     // ── SplitMix64 reference values generated from the Swift runtime ────────
     //     struct Seeded … (AnnotationRenderer.swift verbatim); swift /tmp/t.swift
-    //     Seeded(20260912).next() ×3 and TornPaper/RuledBox mods for seeds 7 / 1.
+    //     Seeded(20260912).next() ×3.
 
     #[test]
     fn seeded_matches_swift_vectors() {
@@ -858,28 +666,6 @@ mod tests {
         assert_eq!(g.next(), 3821998546305730818);
         assert_eq!(g.next(), 1209654006528025633);
         assert_eq!(g.next(), 1409108709278482661);
-        // noiseTile's first pixel: v = next() % 256.
-        let mut n = Seeded(20260912);
-        assert_eq!(n.next() % 256, 2);
-    }
-
-    #[test]
-    fn jitter_matches_swift() {
-        // Swift: Seeded(7).next() % 1000 → 487, 804, 346 …
-        // jitter(3) = (mod/1000 − 0.5)·6 → −0.078, 1.824, −0.924
-        let mut g = Seeded(7);
-        assert_eq!(g.next() % 1000, 487);
-        assert_eq!(g.next() % 1000, 804);
-        assert_eq!(g.next() % 1000, 346);
-        let mut g = Seeded(7);
-        assert_eq!(g.jitter(3.0), -0.07800000000000007);
-        assert_eq!(g.jitter(3.0), 1.8240000000000003);
-        assert_eq!(g.jitter(3.0), -0.9240000000000002);
-        // RuledBox seed 1.
-        let mut g = Seeded(1);
-        assert_eq!(g.next() % 1000, 465);
-        assert_eq!(g.next() % 1000, 519);
-        assert_eq!(g.next() % 1000, 590);
     }
 
     /// Element stream of an NSBezierPath as (kind, points) pairs.
@@ -893,7 +679,13 @@ mod tests {
             unsafe {
                 p.elementAtIndex_associatedPoints(i, pts.as_mut_ptr());
             }
-            let n = if kind == NSBezierPathElement::ClosePath { 0 } else if kind == NSBezierPathElement::CubicCurveTo { 3 } else { 1 };
+            let n = if kind == NSBezierPathElement::ClosePath {
+                0
+            } else if kind == NSBezierPathElement::CubicCurveTo {
+                3
+            } else {
+                1
+            };
             out.push((kind, pts[..n].to_vec()));
         }
         out
@@ -903,88 +695,92 @@ mod tests {
         CGPoint::new(x, y)
     }
 
+    /// Arc endpoints are computed through trigonometry, so a point lands
+    /// within a hair of the exact value rather than on it.
+    fn near(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    /// The card and panel shapes are what replaced the ticket / torn-paper
+    /// paths: assert the four corner arcs land on the geometry the drawing
+    /// code depends on (bounds exact, corner cuts at the radius, sharp
+    /// corners left square).
     #[test]
-    fn torn_paper_first_teeth_match_swift() {
+    fn rounded_rect_corners_geometry() {
         let r = CGRect::new(pt(0.0, 0.0), CGSize::new(100.0, 80.0));
-        let p = torn_paper_path(r, true, true, true, true, 7, 3.0, 7.0);
+        let p = rounded_rect_corners(r, 10.0, Corners::ALL);
         let els = elements(&p);
-        assert_eq!(els[0], (NSBezierPathElement::MoveTo, vec![pt(0.0, 0.0)]));
-        // Top edge: x = 7, 14, 21; y = 0 ± jitter.
-        assert_eq!(els[1], (NSBezierPathElement::LineTo, vec![pt(7.0, -0.07800000000000007)]));
-        assert_eq!(els[2], (NSBezierPathElement::LineTo, vec![pt(14.0, 1.8240000000000003)]));
-        assert_eq!(els[3], (NSBezierPathElement::LineTo, vec![pt(21.0, -0.9240000000000002)]));
-        // Closed; NSBezierPath may keep one degenerate moveTo after the close
-        // (draws nothing) — the same trailing element seen on the Swift side.
-        let closers = els.iter().filter(|e| e.0 == NSBezierPathElement::ClosePath).count();
-        assert_eq!(closers, 1);
+        let b = el_bounds(&els);
         assert!(
-            els[els.len() - 1].0 == NSBezierPathElement::ClosePath
-                || (els[els.len() - 2].0 == NSBezierPathElement::ClosePath
-                    && els[els.len() - 1].0 == NSBezierPathElement::MoveTo)
+            near(b.min().x, 0.0) && near(b.min().y, 0.0) && near(b.max().x, 100.0) && near(b.max().y, 80.0),
+            "bounds {:?} escaped the rect",
+            b
+        );
+        // One quarter arc per corner, and AppKit approximates an arc of at
+        // most 90° with a single cubic segment — so four corners is four
+        // curves, plus the closing edge.
+        let curves = els
+            .iter()
+            .filter(|(k, _)| *k == NSBezierPathElement::CubicCurveTo)
+            .count();
+        assert_eq!(curves, 4, "one cubic per rounded corner");
+        // Start point sits on the left edge, below the top-left corner (the
+        // y coordinate is a sine away from 10.0, hence the tolerance).
+        assert_eq!(els[0], (NSBezierPathElement::MoveTo, vec![pt(0.0, 10.0)]));
+        // Every drawn point stays inside the rect (the arcs bow inwards).
+        for (_, pts) in &els {
+            for p in pts {
+                assert!(p.x >= -0.001 && p.x <= 100.001, "x {} escaped the rect", p.x);
+                assert!(p.y >= -0.001 && p.y <= 80.001, "y {} escaped the rect", p.y);
+            }
+        }
+    }
+
+    /// A square-cornered rect draws no arcs at all and still closes.
+    #[test]
+    fn rounded_rect_corners_none_is_square() {
+        let r = CGRect::new(pt(4.0, 6.0), CGSize::new(20.0, 20.0));
+        let p = rounded_rect_corners(
+            r,
+            8.0,
+            Corners {
+                top_left: false,
+                top_right: false,
+                bottom_left: false,
+                bottom_right: false,
+            },
+        );
+        let els = elements(&p);
+        let curves = els
+            .iter()
+            .filter(|(k, _)| *k == NSBezierPathElement::CubicCurveTo)
+            .count();
+        assert_eq!(curves, 0);
+        let b = el_bounds(&els);
+        assert!(
+            near(b.min().x, 4.0) && near(b.min().y, 6.0) && near(b.max().x, 24.0) && near(b.max().y, 26.0),
+            "bounds {:?}",
+            b
         );
     }
 
+    /// Top-only rounding (the shelf panel) keeps the bottom corners square.
     #[test]
-    fn ruled_box_is_three_open_sides() {
-        let r = CGRect::new(pt(0.0, 0.0), CGSize::new(100.0, 80.0));
-        let p = ruled_box_path(r, 1, 0.9);
-        let els = elements(&p);
-        assert_eq!(els[0], (NSBezierPathElement::MoveTo, vec![pt(0.0, 0.0)]));
-        // First left-side tooth: seed 1 mod 465 → j = (0.465−0.5)·2·0.9 (value
-        // confirmed against the Swift runtime, bit-identical).
-        assert_eq!(els[1], (NSBezierPathElement::LineTo, vec![pt(-0.06299999999999996, 6.0)]));
-        // Ends top-right and is never closed.
-        assert_eq!(els.last().unwrap().0, NSBezierPathElement::LineTo);
-        assert_eq!(els.last().unwrap().1, vec![pt(100.0, 0.0)]);
-    }
-
-    // Reference table captured from the Swift runtime: TicketShape (SwiftUI
-    // Path) vs NSBezierPath built with the same arc calls — every CGPath
-    // element (with curve control points) compares equal, which is why this
-    // port passes the arguments through unchanged. The only divergence at
-    // CGPath level is one degenerate trailing moveTo NSBezierPath adds after
-    // close (draws nothing).
-    #[test]
-    fn ticket_matches_swift_reference() {
-        let r = CGRect::new(pt(10.0, 20.0), CGSize::new(100.0, 80.0));
-        let p = ticket_path(r, Some(30.0), 5.0, 11.0);
+    fn rounded_rect_corners_top_only() {
+        let r = CGRect::new(pt(0.0, 0.0), CGSize::new(200.0, 100.0));
+        let p = rounded_rect_corners(r, 12.0, Corners::TOP);
         let els = elements(&p);
         let b = el_bounds(&els);
-        let expect: [(u8, &[(f64, f64)]); 22] = [
-            (0, &[(15.0, 20.0)]),                                    // M
-            (1, &[(105.0, 20.0)]),                                   // L
-            (1, &[(105.0, 20.0)]),                                   // L (auto-connect)
-            (2, &[(107.7614, 20.0), (110.0, 22.2386), (110.0, 25.0)]),   // corner
-            (1, &[(110.0, 59.0)]),
-            (1, &[(110.0, 59.0)]),
-            (2, &[(103.9249, 59.0), (99.0, 63.9249), (99.0, 70.0)]),     // notch in
-            (2, &[(99.0, 76.0751), (103.9249, 81.0), (110.0, 81.0)]),    // notch out
-            (1, &[(110.0, 95.0)]),
-            (1, &[(110.0, 95.0)]),
-            (2, &[(110.0, 97.7614), (107.7614, 100.0), (105.0, 100.0)]), // corner
-            (1, &[(15.0, 100.0)]),
-            (1, &[(15.0, 100.0)]),
-            (2, &[(12.2386, 100.0), (10.0, 97.7614), (10.0, 95.0)]),     // corner
-            (1, &[(10.0, 81.0)]),
-            (1, &[(10.0, 81.0)]),
-            (2, &[(16.0751, 81.0), (21.0, 76.0751), (21.0, 70.0)]),      // notch in
-            (2, &[(21.0, 63.9249), (16.0751, 59.0), (10.0, 59.0)]),      // notch out
-            (1, &[(10.0, 25.0)]),
-            (1, &[(10.0, 25.0)]),
-            (2, &[(10.0, 22.2386), (12.2386, 20.0), (15.0, 20.0)]),      // corner
-            (3, &[]),                                                  // close
-        ];
-        assert!(els.len() >= expect.len());
-        for (i, (kind, pts)) in expect.iter().enumerate() {
-            assert_eq!(els[i].0.0, *kind as usize, "element {i} kind");
-            assert_eq!(els[i].1.len(), pts.len(), "element {i} arity");
-            for (got, (ex, ey)) in els[i].1.iter().zip(pts.iter()) {
-                // Swift reference printed to 4 decimals.
-                assert!((got.x - ex).abs() < 5e-5, "element {i} x: {} vs {ex}", got.x);
-                assert!((got.y - ey).abs() < 5e-5, "element {i} y: {} vs {ey}", got.y);
-            }
-        }
-        assert_eq!((b.min().x, b.min().y, b.max().x, b.max().y), (10.0, 20.0, 110.0, 100.0));
+        assert!(
+            near(b.min().x, 0.0) && near(b.min().y, 0.0) && near(b.max().x, 200.0) && near(b.max().y, 100.0),
+            "bounds {:?} escaped the rect",
+            b
+        );
+        let curves = els
+            .iter()
+            .filter(|(k, _)| *k == NSBezierPathElement::CubicCurveTo)
+            .count();
+        assert_eq!(curves, 2, "one cubic per rounded corner");
     }
 
     fn el_bounds(els: &[(NSBezierPathElement, Vec<CGPoint>)]) -> CGRect {
@@ -1001,34 +797,124 @@ mod tests {
         CGRect::new(pt(x0, y0), CGSize::new(x1 - x0, y1 - y0))
     }
 
+    /// Resolve a colour to sRGB bytes by actually painting it under a given
+    /// appearance. A semantic colour is an `NSDynamicSystemColor`: it has no
+    /// components of its own and refuses every conversion selector, because it
+    /// only resolves while a drawing appearance is current. Painting into a
+    /// 1x1 bitmap is therefore both the only route and the honest one — it
+    /// tests the mechanism the UI depends on, not a colour object's internals.
+    fn srgb_under(appearance: &objc2_app_kit::NSAppearance, c: &NSColor) -> (u8, u8, u8) {
+        use objc2_app_kit::{
+            NSBitmapFormat, NSBitmapImageRep, NSDeviceRGBColorSpace, NSGraphicsContext,
+        };
+        let rep = unsafe {
+            NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
+                NSBitmapImageRep::alloc(),
+                std::ptr::null_mut(),
+                1,
+                1,
+                8,
+                4,
+                true,
+                false,
+                NSDeviceRGBColorSpace,
+                NSBitmapFormat(0),
+                4,
+                32,
+            )
+        }
+        .expect("1x1 RGBA bitmap");
+
+        let prev = NSGraphicsContext::currentContext();
+        let ctx = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)
+            .expect("bitmap graphics context");
+        let out = std::cell::Cell::new((0u8, 0u8, 0u8));
+        let block = block2::RcBlock::new(|| {
+            NSGraphicsContext::setCurrentContext(Some(&ctx));
+            NSGraphicsContext::saveGraphicsState_class();
+            c.setFill();
+            objc2_app_kit::NSRectFill(CGRect::new(CGPoint::ZERO, CGSize::new(1.0, 1.0)));
+            NSGraphicsContext::restoreGraphicsState_class();
+            NSGraphicsContext::setCurrentContext(prev.as_deref());
+            // Non-planar 8-bit RGBA is laid out R, G, B, A.
+            let px = rep.bitmapData();
+            out.set(unsafe { (*px, *px.add(1), *px.add(2)) });
+        });
+        let dyn_block: &block2::DynBlock<dyn Fn()> = &block;
+        appearance.performAsCurrentDrawingAppearance(dyn_block);
+        out.get()
+    }
+
+    /// The skin's whole point is that light and dark both work from one code
+    /// path: every semantic colour must actually resolve differently under
+    /// darkAqua, and the ground must go dark there (the old stationery skin
+    /// had no dark mode at all).
     #[test]
-    fn ticket_without_notch_has_no_mid_arcs() {
-        let r = CGRect::new(pt(10.0, 20.0), CGSize::new(100.0, 80.0));
-        let p = ticket_path(r, None, 5.0, 11.0);
-        let els = elements(&p);
-        let curves = els.iter().filter(|(k, _)| *k == NSBezierPathElement::CubicCurveTo).count();
-        assert_eq!(curves, 4, "four rounded corners only");
+    fn semantic_colours_follow_the_appearance() {
+        use objc2_app_kit::NSAppearanceNameDarkAqua;
+        let Some(light) = objc2_app_kit::NSAppearance::appearanceNamed(unsafe {
+            objc2_app_kit::NSAppearanceNameAqua
+        }) else {
+            return; // headless CI without an appearance server
+        };
+        let Some(dark) = objc2_app_kit::NSAppearance::appearanceNamed(unsafe {
+            NSAppearanceNameDarkAqua
+        }) else {
+            return;
+        };
+        for (name, c) in [
+            ("ground", ground()),
+            ("surface", surface()),
+            ("label", label()),
+            ("separator", separator()),
+        ] {
+            let l = srgb_under(&light, &c);
+            let d = srgb_under(&dark, &c);
+            assert_ne!(l, d, "{} must resolve differently in dark mode (got {:?})", name, l);
+        }
+        // Ground is light in light mode and dark in dark mode — the check
+        // that would have caught the old paper-on-brown skin.
+        let (gr, gg, gb) = srgb_under(&light, &ground());
+        let (dr, dg, db) = srgb_under(&dark, &ground());
+        assert!(gr > 200 && gg > 200 && gb > 200, "light ground is light (got {:?})", (gr, gg, gb));
+        assert!(dr < 60 && dg < 60 && db < 60, "dark ground is dark (got {:?})", (dr, dg, db));
+        // Text stays legible against the ground in both.
+        let (lr, lg, lb) = srgb_under(&light, &label());
+        assert!(lr < 90 && lg < 90 && lb < 90, "light-mode label is dark ink");
+        let (dr2, dg2, db2) = srgb_under(&dark, &label());
+        assert!(dr2 > 190 && dg2 > 190 && db2 > 190, "dark-mode label is light ink");
     }
 
     #[test]
-    fn fonts_resolve() {
-        // Songti ships with macOS.
+    fn body_face_is_the_system_font() {
+        // The skin is system type: no bundled serif, no handwriting.
         let f = serif(14.0, false);
-        assert_eq!(f.fontName().to_string(), "STSongti-SC-Regular");
-        let b = serif(14.0, true);
-        assert_eq!(b.fontName().to_string(), "STSongti-SC-Bold");
         assert_eq!(f.pointSize(), 14.0);
-        // Brand fonts live under Resources/Fonts in the repo; registration is
-        // what gates the Caveat descriptor.
-        assert!(register_brand_fonts());
-        let s = script(16.0);
-        assert_eq!(s.familyName().map(|n| n.to_string()).as_deref(), Some("Caveat"));
+        let family = f.familyName().map(|n| n.to_string()).unwrap_or_default();
+        let system = NSFont::systemFontOfSize_weight(14.0, unsafe { NSFontWeightRegular });
+        assert_eq!(family, system.familyName().map(|n| n.to_string()).unwrap_or_default());
+        let b = serif(14.0, true);
+        assert_ne!(
+            b.fontDescriptor().symbolicTraits().0,
+            0,
+            "bold resolves to a real weight"
+        );
+        assert_eq!(semibold(13.0).pointSize(), 13.0);
     }
 
     #[test]
-    fn noise_tile_builds() {
-        let t = noise_tile();
-        assert_eq!(t.size(), CGSize::new(96.0, 96.0));
+    fn brand_face_registers_or_falls_back() {
+        // Brand fonts live under Resources/Fonts in the repo; registration is
+        // what gates the Ysabeau descriptor. Either way a face must come back.
+        let registered = register_brand_fonts();
+        let s = script(16.0);
+        assert_eq!(s.pointSize(), 16.0);
+        if registered {
+            assert_eq!(
+                s.familyName().map(|n| n.to_string()).as_deref(),
+                Some("Ysabeau Office")
+            );
+        }
     }
 
     #[test]
@@ -1048,8 +934,8 @@ mod tests {
         );
     }
 
-    /// Renders the shapes + textures to PNGs for eyeball comparison with the
-    /// Swift build. Opt-in: `PASTORY_THEME_SNAPSHOT_DIR=/tmp xargs cargo test`.
+    /// Renders the new shapes to PNGs for eyeball comparison. Opt-in:
+    /// `PASTORY_THEME_SNAPSHOT_DIR=/tmp xargs cargo test`.
     #[test]
     fn snapshot_fixtures() {
         let Some(dir) = std::env::var_os("PASTORY_THEME_SNAPSHOT_DIR") else {
@@ -1059,73 +945,25 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         objc2::rc::autoreleasepool(|_| {
             let card = CGRect::new(pt(0.0, 0.0), CGSize::new(288.0, 420.0));
-            // A whole card: desk ground, ticket punched like an odd card.
             if let Some(cg) = offscreen_cg(card.size, |_| {
-                draw_ground(CGRect::new(pt(-40.0, -40.0), CGSize::new(card.size.width + 80.0, card.size.height + 80.0)));
-                let t = ticket_path(
-                    CGRect::new(pt(16.0, 16.0), CGSize::new(256.0, 388.0)),
-                    Some(220.0),
-                    5.0,
-                    11.0,
-                );
-                draw_paper(&t, &paper());
-                ruled_box_path(CGRect::new(pt(32.0, 360.0), CGSize::new(120.0, 12.0)), 1, 0.9).stroke();
+                ground().setFill();
+                NSRectFill(CGRect::new(pt(-40.0, -40.0), CGSize::new(card.size.width + 80.0, card.size.height + 80.0)));
+                let t = rounded_rect(CGRect::new(pt(16.0, 16.0), CGSize::new(256.0, 388.0)), RADIUS_CARD);
+                draw_surface(&t, &surface());
+                let chip = rounded_rect(CGRect::new(pt(32.0, 360.0), CGSize::new(120.0, 26.0)), RADIUS_CONTROL);
+                accent_tint().setFill();
+                chip.fill();
             }) {
                 let png = crate::capture::screenshotter::png_data(&cg).unwrap();
                 std::fs::write(dir.join("card.png"), png).unwrap();
             }
             if let Some(cg) = offscreen_cg(CGSize::new(320.0, 120.0), |r| {
                 draw_ground(r);
-                let t = torn_paper_path(CGRect::new(pt(10.0, 15.0), CGSize::new(300.0, 90.0)), true, true, true, true, 7, 3.0, 7.0);
-                draw_paper(&t, &paper_blue());
+                let p = rounded_rect_corners(CGRect::new(pt(10.0, 15.0), CGSize::new(300.0, 90.0)), RADIUS_PANEL, Corners::TOP);
+                draw_surface(&p, &surface());
             }) {
                 let png = crate::capture::screenshotter::png_data(&cg).unwrap();
-                std::fs::write(dir.join("torn.png"), png).unwrap();
-            }
-            if let Some(cg) = offscreen_cg(CGSize::new(288.0, 30.0), |r| {
-                draw_ground(r);
-                NSColor::colorWithPatternImage(&paper_tile()).setFill();
-                NSRectFill(CGRect::new(pt(8.0, 5.0), CGSize::new(130.0, 20.0)));
-                NSColor::colorWithPatternImage(&paper_blue_tile()).setFill();
-                NSRectFill(CGRect::new(pt(142.0, 5.0), CGSize::new(64.0, 20.0)));
-                NSColor::colorWithPatternImage(&desk_tile()).setFill();
-                NSRectFill(CGRect::new(pt(210.0, 5.0), CGSize::new(70.0, 20.0)));
-            }) {
-                let png = crate::capture::screenshotter::png_data(&cg).unwrap();
-                std::fs::write(dir.join("tiles.png"), png).unwrap();
-            }
-            // Bake content drawn at exact tile size + a grid-aligned tiling.
-            if let Some(cg) = offscreen_cg(CGSize::new(96.0, 96.0), |r| {
-                paper_tile().drawInRect(r);
-            }) {
-                let png = crate::capture::screenshotter::png_data(&cg).unwrap();
-                std::fs::write(dir.join("bake.png"), png).unwrap();
-            }
-            if let Some(cg) = offscreen_cg(CGSize::new(192.0, 96.0), |r| {
-                NSColor::colorWithPatternImage(&paper_tile()).setFill();
-                NSRectFill(r);
-            }) {
-                let png = crate::capture::screenshotter::png_data(&cg).unwrap();
-                std::fs::write(dir.join("aligned.png"), png).unwrap();
-            }
-            // Off-origin paper patches with live grain — the shelf's per-card case.
-            if let Some(cg) = offscreen_cg(CGSize::new(220.0, 110.0), |r| {
-                draw_ground(r);
-                let t = torn_paper_path(
-                    CGRect::new(pt(16.3, 22.7), CGSize::new(150.0, 60.0)),
-                    true, true, true, true, 11, 3.0, 7.0,
-                );
-                draw_paper(&t, &paper());
-                let t2 = ticket_path(
-                    CGRect::new(pt(37.5, 41.25), CGSize::new(120.0, 50.0)),
-                    Some(25.0),
-                    5.0,
-                    11.0,
-                );
-                draw_paper(&t2, &paper_blue());
-            }) {
-                let png = crate::capture::screenshotter::png_data(&cg).unwrap();
-                std::fs::write(dir.join("patch.png"), png).unwrap();
+                std::fs::write(dir.join("panel.png"), png).unwrap();
             }
         });
     }

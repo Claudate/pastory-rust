@@ -192,7 +192,7 @@ impl OcrPanel {
             unsafe { NSAppearanceNameDarkAqua },
         )
         .expect("darkAqua exists")));
-        p.setBackgroundColor(Some(&theme::brown()));
+        p.setBackgroundColor(Some(&theme::ground()));
         p.setLevel(above_picker_level());
         unsafe {
             p.setReleasedWhenClosed(false);
@@ -208,7 +208,7 @@ impl OcrPanel {
         // heading 识别文字 (script 24) at top-left (18, 30 from top).
         let heading = make_label(&l("识别文字"));
         heading.setFont(Some(&theme::script(24.0)));
-        heading.setTextColor(Some(&theme::on_brown()));
+        heading.setTextColor(Some(&theme::label()));
         let head_h = crate::shelf::card::line_height(&theme::script(24.0));
         heading.setFrame(CGRect::new(
             CGPoint::new(18.0, h - 30.0 - head_h),
@@ -221,14 +221,14 @@ impl OcrPanel {
         scroll.setHasVerticalScroller(true);
         scroll.setBorderType(objc2_app_kit::NSBorderType::NoBorder);
         scroll.setDrawsBackground(true);
-        scroll.setBackgroundColor(&theme::paper());
-        theme::paper_sheet(&scroll, 4.0);
+        scroll.setBackgroundColor(&theme::surface());
+        theme::card_layer(&scroll, 4.0);
         let tv = NSTextView::new(mtm);
         tv.setRichText(false);
         tv.setFont(Some(&theme::serif(15.0, false)));
-        tv.setTextColor(Some(&theme::ink()));
-        tv.setInsertionPointColor(Some(&theme::ink()));
-        tv.setBackgroundColor(&theme::paper());
+        tv.setTextColor(Some(&theme::label()));
+        tv.setInsertionPointColor(Some(&theme::label()));
+        tv.setBackgroundColor(&theme::surface());
         tv.setTextContainerInset(CGSize::new(14.0, 12.0));
         tv.setAutomaticQuoteSubstitutionEnabled(false);
         tv.setVerticallyResizable(true);
@@ -253,7 +253,7 @@ impl OcrPanel {
         // status (left), 关闭 + 复制文字 (right).
         let st = make_label("");
         st.setFont(Some(&theme::serif(13.0, false)));
-        st.setTextColor(Some(&theme::on_brown_muted()));
+        st.setTextColor(Some(&theme::label_tertiary()));
         st.setFrame(CGRect::new(
             CGPoint::new(18.0, btn_y + (btn_h - 16.0) / 2.0),
             CGSize::new(200.0, 16.0),
@@ -268,7 +268,7 @@ impl OcrPanel {
         *self.delegate_obj.borrow_mut() = Some(delegate);
         let delegate_obj: &AnyObject =
             unsafe { &*(&**self.delegate_obj.borrow().as_ref().unwrap() as *const OcrPanelWinDelegate as *const AnyObject) };
-        let copy = crate::capture::selection_overlay::paper_button_export(
+        let copy = crate::capture::selection_overlay::chrome_button_export(
             &l("复制文字"),
             true,
             false,
@@ -276,7 +276,7 @@ impl OcrPanel {
             sel!(copyTapped:),
         );
         copy.setKeyEquivalent(&NSString::from_str("\r"));
-        let cancel = crate::capture::selection_overlay::paper_button_export(
+        let cancel = crate::capture::selection_overlay::chrome_button_export(
             &l("关闭"),
             false,
             true,

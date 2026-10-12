@@ -217,13 +217,13 @@ fn symbol_image(name: &str, point: f64, weight: f64) -> Option<Retained<NSImage>
 // MARK: AnnotateToolbar
 
 fn bar_ink() -> Retained<NSColor> {
-    theme::on_brown()
+    theme::label()
 }
 fn bar_selected_bg() -> Retained<NSColor> {
-    theme::paper_blue()
+    theme::accent()
 }
 fn bar_selected_ink() -> Retained<NSColor> {
-    theme::ink()
+    theme::label()
 }
 
 /// divider between groups (`AnnotateToolbar.divider()` = deskDivider 26).
@@ -232,7 +232,7 @@ fn divider_26() -> Retained<NSView> {
     let v = NSView::new(mtm);
     v.setWantsLayer(true);
     if let Some(layer) = v.layer() {
-        let c = theme::on_brown().colorWithAlphaComponent(0.25).CGColor();
+        let c = theme::label().colorWithAlphaComponent(0.25).CGColor();
         unsafe {
             let _: () = msg_send![&*layer, setBackgroundColor: &*c];
         }
@@ -385,7 +385,7 @@ impl AnnotateToolbar {
         let this = mtm.alloc::<AnnotateToolbar>().set_ivars(AnnotateToolbarIvars::default());
         let bar: Retained<AnnotateToolbar> = unsafe { msg_send![super(this), init] };
         *bar.ivars().canvas.borrow_mut() = Some(canvas.clone());
-        theme::paper_sheet(&bar, 6.0);
+        theme::card_layer(&bar, 6.0);
         // SAFETY: the bar outlives its buttons.
         let bar_obj: &AnyObject =
             unsafe { &*(&*bar as *const AnnotateToolbar as *const AnyObject) };
@@ -465,7 +465,7 @@ impl AnnotateToolbar {
         })
         .expect("symbol");
         let undo = Self::icon_button(&undo_img, &l("撤销 ⌘Z"), target, sel!(undoTapped:));
-        undo.setContentTintColor(Some(&theme::on_brown()));
+        undo.setContentTintColor(Some(&theme::label()));
         undo.setFrameOrigin(CGPoint::new(x, (56.0 - 38.0) / 2.0));
         bar.addSubview(&undo);
         *bar.ivars().undo_button.borrow_mut() = Some(undo);
@@ -476,7 +476,7 @@ impl AnnotateToolbar {
         })
         .expect("symbol");
         let cancel = Self::icon_button(&cancel_img, &l("取消 ⎋"), target, sel!(cancelTapped:));
-        cancel.setContentTintColor(Some(&theme::on_brown()));
+        cancel.setContentTintColor(Some(&theme::label()));
         cancel.setFrameOrigin(CGPoint::new(x, (56.0 - 38.0) / 2.0));
         bar.addSubview(&cancel);
         x += 38.0 + 4.0;
@@ -484,7 +484,7 @@ impl AnnotateToolbar {
         let done_img = symbol_image("checkmark", 17.0, unsafe { objc2_app_kit::NSFontWeightBold })
         .expect("symbol");
         let done = Self::icon_button(&done_img, &done_tip, target, sel!(doneTapped:));
-        done.setContentTintColor(Some(&theme::paper_blue()));
+        done.setContentTintColor(Some(&theme::accent()));
         done.setFrameOrigin(CGPoint::new(x, (56.0 - 38.0) / 2.0));
         bar.addSubview(&done);
         x += 38.0;
@@ -710,7 +710,7 @@ impl SubBar {
         let this = mtm.alloc::<SubBar>().set_ivars(SubBarIvars::default());
         let bar: Retained<SubBar> = unsafe { msg_send![super(this), init] };
         *bar.ivars().canvas.borrow_mut() = Some(canvas.clone());
-        theme::paper_sheet(&bar, 6.0);
+        theme::card_layer(&bar, 6.0);
         // SAFETY: the sub bar outlives its buttons.
         let bar_obj: &AnyObject = unsafe { &*(&*bar as *const SubBar as *const AnyObject) };
         let target = Some(bar_obj);
@@ -822,7 +822,7 @@ impl SubBar {
             if let Some(layer) = b.layer() {
                 unsafe {
                     if on {
-                        let c = theme::paper_blue().CGColor();
+                        let c = theme::accent().CGColor();
                         let _: () = msg_send![&*layer, setBackgroundColor: &*c];
                     } else {
                         let none: Option<&objc2_core_graphics::CGColor> = None;
@@ -830,7 +830,7 @@ impl SubBar {
                     }
                 }
             }
-            let tint = if on { theme::ink() } else { theme::on_brown() };
+            let tint = if on { theme::label() } else { theme::label() };
             if kind == AnnotateTool::Text {
                 b.setImage(None);
                 let label = [l("小"), l("中"), l("大")][s.raw() as usize - 1].clone();
@@ -865,7 +865,7 @@ impl SubBar {
             if let Some(layer) = b.layer() {
                 unsafe {
                     if on {
-                        let c = theme::paper().CGColor();
+                        let c = theme::surface().CGColor();
                         let _: () = msg_send![&*layer, setBorderColor: &*c];
                         let _: () = msg_send![&*layer, setBorderWidth: 2.0f64];
                     } else {

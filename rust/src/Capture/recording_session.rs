@@ -501,20 +501,20 @@ impl RecordingSession {
             15.0,
             unsafe { objc2_app_kit::NSFontWeightSemibold },
         )));
-        label.setTextColor(Some(&theme::on_brown()));
+        label.setTextColor(Some(&theme::label()));
         label.setFrame(CGRect::new(CGPoint::new(16.0 + 10.0 + 10.0, (52.0 - 20.0) / 2.0), CGSize::new(70.0, 20.0)));
         v.addSubview(&label);
         *self.time_label.borrow_mut() = Some(label);
         // SAFETY: the delegate object (this session) outlives the panel.
         let delegate_obj: &AnyObject = unsafe { &*(self as *const Self as *const AnyObject) };
-        let stop_btn = crate::capture::selection_overlay::paper_button_export(
+        let stop_btn = crate::capture::selection_overlay::chrome_button_export(
             &l("■ 停止"),
             true,
             false,
             Some(delegate_obj),
             objc2::sel!(stopTappedSession:),
         );
-        let cancel_btn = crate::capture::selection_overlay::paper_button_export(
+        let cancel_btn = crate::capture::selection_overlay::chrome_button_export(
             &l("丢弃"),
             false,
             true,
@@ -645,7 +645,7 @@ impl DeskStripViewBuilder {
         let mtm = objc2::MainThreadMarker::new().expect("main thread");
         let this = mtm.alloc::<Self>().set_ivars(DeskStripViewBuilderIvars);
         let v: objc2::rc::Retained<Self> = unsafe { objc2::msg_send![super(this), init] };
-        crate::app::theme::paper_sheet(&v, 6.0);
+        crate::app::theme::card_layer(&v, 6.0);
         v.setFrame(objc2_core_foundation::CGRect::new(
             objc2_core_foundation::CGPoint::ZERO,
             objc2_core_foundation::CGSize::new(290.0, 52.0),

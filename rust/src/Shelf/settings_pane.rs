@@ -326,14 +326,14 @@ fn draw(view: &SettingsView) {
     let mut hotspots: Vec<Hot> = Vec::new();
     // Header: title + 返回剪贴板 + 关闭.
     let title_font = theme::serif(22.0, true);
-    text(view, CGPoint::new(cx, 18.0), &l("设置"), &title_font, &theme::on_brown(), None);
+    text(view, CGPoint::new(cx, 18.0), &l("设置"), &title_font, &theme::label(), None);
     let back_label = format!("‹ {}", l("返回剪贴板"));
     hit_text(view, &mut hotspots, &back_label,
         CGRect::new(CGPoint::new(cx + cw - 200.0, 18.0), CGSize::new(160.0, 36.0)),
-        &theme::serif(13.0, true), &theme::on_brown(), Choice::Back, true);
+        &theme::serif(13.0, true), &theme::label(), Choice::Back, true);
     hit_text(view, &mut hotspots, "✕",
         CGRect::new(CGPoint::new(cx + cw - 40.0, 18.0), CGSize::new(40.0, 36.0)),
-        &theme::serif(16.0, false), &theme::on_brown(), Choice::Close, true);
+        &theme::serif(16.0, false), &theme::label(), Choice::Close, true);
     // Sheet columns scroll under the fixed header (Swift's ScrollView). The
     // scroll offset just shifts the y accumulators; every derived rect
     // (rows, buttons, hotspots) follows, and the band clips to the header line.
@@ -357,17 +357,17 @@ fn draw(view: &SettingsView) {
     sheet_header(view, &mut y, col1, col_w, &l("版本更新"));
     sheet(view, &mut y, col1, col_w, 2, |v, y_pos| {
         let row = sheet_row(y_pos, col1, col_w, 0);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("当前版本 %@").replacen("%@", &crate::app::updater::current_version(), 1), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("当前版本 %@").replacen("%@", &crate::app::updater::current_version(), 1), &theme::serif(15.0, false), &theme::label(), None);
         if let Some(n) = &state.update_note {
             let font = theme::serif(12.0, false);
             let w = crate::shelf::card::measure(n, &font, 220.0, None).width.min(200.0);
-            text(v, CGPoint::new(row.0.x + col_w - 32.0 - 160.0 - w, row.0.y + 12.0), n, &font, &theme::ink_muted(), Some(1.0));
+            text(v, CGPoint::new(row.0.x + col_w - 32.0 - 160.0 - w, row.0.y + 12.0), n, &font, &theme::label_secondary(), Some(1.0));
         }
         let check_label = if state.checking { l("检查中…") } else { l("手动检查更新") };
         hit_button(view, &mut hotspots, &check_label,
             CGPoint::new(row.0.x + col_w - 32.0 - 160.0, row.0.y + 6.0), Choice::CheckUpdates, 160.0, false);
         let row2 = sheet_row(y_pos, col1, col_w, 1);
-        text(v, CGPoint::new(row2.0.x + SHEET_PAD, row2.0.y + (row2.1 - line_height_f()) / 2.0), &l("每天自动检查一次（app 唯一的联网请求，不带任何标识）"), &theme::serif(13.0, false), &theme::ink_muted(), Some(1.0));
+        text(v, CGPoint::new(row2.0.x + SHEET_PAD, row2.0.y + (row2.1 - line_height_f()) / 2.0), &l("每天自动检查一次（app 唯一的联网请求，不带任何标识）"), &theme::serif(13.0, false), &theme::label_secondary(), Some(1.0));
         toggle(view, &mut hotspots, CGPoint::new(row2.0.x + col_w - 32.0 - 44.0, row2.0.y + 6.0), Choice::CheckForUpdates);
     });
     sheet_header(view, &mut y, col1, col_w, &l("快捷键"));
@@ -378,7 +378,7 @@ fn draw(view: &SettingsView) {
             (&l("搜索剪贴板"), "search", state.search_taken),
         ].iter().enumerate() {
             let row = sheet_row(y_pos, col1, col_w, i);
-            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), label, &theme::serif(15.0, false), &theme::ink(), None);
+            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), label, &theme::serif(15.0, false), &theme::label(), None);
             recorder_row(v, &mut hotspots, which, &state, CGPoint::new(row.0.x + col_w - 32.0, row.0.y + 6.0));
             let _ = taken;
         }
@@ -388,13 +388,13 @@ fn draw(view: &SettingsView) {
         let prefs = preferences::Preferences::shared();
         sheet(view, &mut y, col1, col_w, 3, |v, y_pos| {
             let row = sheet_row(y_pos, col1, col_w, 0);
-            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("未 Pin 内容保留时间"), &theme::serif(15.0, false), &theme::ink(), None);
+            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("未 Pin 内容保留时间"), &theme::serif(15.0, false), &theme::label(), None);
             retention_segments(v, &mut hotspots, &prefs, CGPoint::new(row.0.x + col_w - 32.0, row.0.y + 5.0));
             let row = sheet_row(y_pos, col1, col_w, 1);
-            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("当日清理时间"), &theme::serif(15.0, false), &theme::ink(), None);
+            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("当日清理时间"), &theme::serif(15.0, false), &theme::label(), None);
             hour_wheel(v, &mut hotspots, &prefs, CGPoint::new(row.0.x + col_w - 32.0 - 96.0, row.0.y + 5.0));
             let row = sheet_row(y_pos, col1, col_w, 2);
-            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("手动清空一次（不含已 Pin 内容）"), &theme::serif(15.0, false), &theme::ink(), None);
+            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("手动清空一次（不含已 Pin 内容）"), &theme::serif(15.0, false), &theme::label(), None);
             let clear_label = if state.cleared { l("已清空") } else { l("现在清空") };
             hit_button(view, &mut hotspots, &clear_label,
                 CGPoint::new(row.0.x + col_w - 32.0 - 120.0, row.0.y + 6.0), Choice::ClearNow, 120.0, state.cleared);
@@ -403,10 +403,10 @@ fn draw(view: &SettingsView) {
     sheet_header(view, &mut y, col1, col_w, &l("系统"));
     sheet(view, &mut y, col1, col_w, 3, |v, y_pos| {
         let row = sheet_row(y_pos, col1, col_w, 0);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("登录时启动"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("登录时启动"), &theme::serif(15.0, false), &theme::label(), None);
         switch_control(v, &mut hotspots, CGPoint::new(row.0.x + col_w - 32.0 - 44.0, row.0.y + 6.0), Choice::LaunchAtLogin, state.login_on, view);
         let row = sheet_row(y_pos, col1, col_w, 1);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("语言"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("语言"), &theme::serif(15.0, false), &theme::label(), None);
         let prefs = preferences::Preferences::shared();
         let lang = prefs.language().to_string();
         let opts: [(&str, &str, Choice); 3] = [
@@ -416,7 +416,7 @@ fn draw(view: &SettingsView) {
         ];
         segment_choice(v, &mut hotspots, CGPoint::new(row.0.x + col_w - 32.0, row.0.y + 5.0), &opts, &lang);
         let row = sheet_row(y_pos, col1, col_w, 2);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("屏幕录制权限（截图、录屏需要）"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("屏幕录制权限（截图、录屏需要）"), &theme::serif(15.0, false), &theme::label(), None);
         let sr_label = if state.has_sr { l("已授权") } else { l("未授权") };
         tag(v, CGPoint::new(row.0.x + col_w - 32.0 - (if state.has_sr { 74.0 } else { 154.0 }), row.0.y + 9.0), &sr_label, state.has_sr);
         if !state.has_sr {
@@ -430,23 +430,23 @@ fn draw(view: &SettingsView) {
     sheet_header(view, &mut y2, col2, col_w, &l("剪贴板"));
     sheet(view, &mut y2, col2, col_w, 3, |v, y_pos| {
         let row = sheet_row(y_pos, col2, col_w, 0);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("暂停记录剪贴板"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("暂停记录剪贴板"), &theme::serif(15.0, false), &theme::label(), None);
         switch_control(v, &mut hotspots, CGPoint::new(row.0.x + col_w - 32.0 - 44.0, row.0.y + 6.0), Choice::Pause, prefs.monitoring_paused(), view);
         let row = sheet_row(y_pos, col2, col_w, 1);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("记录密码管理器复制的内容"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("记录密码管理器复制的内容"), &theme::serif(15.0, false), &theme::label(), None);
         let hint = if prefs.record_password_managers() { &l("从 1Password 等「密码管理软件」复制的内容也会进剪贴板。") } else { &l("从 1Password 等「密码管理软件」复制的内容均不进剪贴板。") };
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), hint, &theme::serif(12.0, false), &theme::ink_muted(), Some(1.0));
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), hint, &theme::serif(12.0, false), &theme::label_secondary(), Some(1.0));
         switch_control(v, &mut hotspots, CGPoint::new(row.0.x + col_w - 32.0 - 44.0, row.0.y + 12.0), Choice::Password, prefs.record_password_managers(), view);
         let row = sheet_row(y_pos, col2, col_w, 2);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("直接粘贴到刚才的应用"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("直接粘贴到刚才的应用"), &theme::serif(15.0, false), &theme::label(), None);
         let hint = match prefs.paste_mode().as_str() {
             "off" => l("双击和回车都只复制并收起"),
             "double" => l("双击卡片，内容直接贴进刚才的应用"),
             _ => l("用方向键选中卡片后，回车也会直接粘贴"),
         };
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), &hint, &theme::serif(12.0, false), &theme::ink_muted(), Some(1.0));
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), &hint, &theme::serif(12.0, false), &theme::label_secondary(), Some(1.0));
         if prefs.paste_mode() != "off" && !state.has_ax {
-            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 44.0), &l("需要辅助功能权限"), &theme::serif(12.0, false), &theme::ink(), Some(1.0));
+            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 44.0), &l("需要辅助功能权限"), &theme::serif(12.0, false), &theme::label(), Some(1.0));
             hit_button(view, &mut hotspots, &l("去授权"), CGPoint::new(row.0.x + SHEET_PAD + 160.0, row.0.y + 40.0), Choice::GrantAX, 80.0, false);
         }
         let opts: [(&str, &str, Choice); 3] = [
@@ -459,48 +459,48 @@ fn draw(view: &SettingsView) {
     sheet_header(view, &mut y2, col2, col_w, &l("截图与录屏"));
     sheet(view, &mut y2, col2, col_w, 2, |v, y_pos| {
         let row = sheet_row(y_pos, col2, col_w, 0);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("本地数据库截图存储方式"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("本地数据库截图存储方式"), &theme::serif(15.0, false), &theme::label(), None);
         let hint = if prefs.stores_heic() { &l("高质量有损压缩，体积约为 PNG 的三分之一") } else { &l("无损，体积最大") };
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), hint, &theme::serif(12.0, false), &theme::ink_muted(), Some(1.0));
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), hint, &theme::serif(12.0, false), &theme::label_secondary(), Some(1.0));
         let opts: [(&str, &str, Choice); 2] = [("heic", "HEIC", Choice::ImageStorage("heic")), ("png", "PNG", Choice::ImageStorage("png"))];
         segment_choice(v, &mut hotspots, CGPoint::new(row.0.x + col_w - 32.0, row.0.y + 10.0), &opts, &prefs.image_storage());
         let row = sheet_row(y_pos, col2, col_w, 1);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("录屏编码"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("录屏编码"), &theme::serif(15.0, false), &theme::label(), None);
         let hint = if prefs.record_hevc() { &l("体积小一半；老设备和部分 Windows 打不开") } else { &l("所有设备都能播放") };
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), hint, &theme::serif(12.0, false), &theme::ink_muted(), Some(1.0));
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), hint, &theme::serif(12.0, false), &theme::label_secondary(), Some(1.0));
         let opts: [(&str, &str, Choice); 2] = [("h264", "H.264", Choice::Codec(false)), ("hevc", "HEVC", Choice::Codec(true))];
         segment_choice(v, &mut hotspots, CGPoint::new(row.0.x + col_w - 32.0, row.0.y + 10.0), &opts, if prefs.record_hevc() { "hevc" } else { "h264" });
     });
     sheet_header(view, &mut y2, col2, col_w, &l("位置"));
     sheet(view, &mut y2, col2, col_w, 2, |v, y_pos| {
         let row = sheet_row(y_pos, col2, col_w, 0);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("「保存到本地」默认打开的文件夹"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("「保存到本地」默认打开的文件夹"), &theme::serif(15.0, false), &theme::label(), None);
         let dir = prefs.custom_export_dir().unwrap_or_else(|| prefs.export_directory().to_string_lossy().into_owned());
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), &abbreviate_home(&dir), &theme::serif(12.0, false), &theme::ink_muted(), Some(1.0));
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), &abbreviate_home(&dir), &theme::serif(12.0, false), &theme::label_secondary(), Some(1.0));
         hit_button(view, &mut hotspots, &l("选择…"), CGPoint::new(row.0.x + col_w - 32.0 - 90.0, row.0.y + 8.0), Choice::ChooseExport, 90.0, false);
         let row = sheet_row(y_pos, col2, col_w, 1);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("剪贴板内容临时存放位置"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 8.0), &l("剪贴板内容临时存放位置"), &theme::serif(15.0, false), &theme::label(), None);
         let (path, bytes, count) = store::read(|s| {
             (s.root.to_string_lossy().into_owned(), dir_size(&s.root), s.items.len())
         });
         let meta = format!("{} · {} · · {}", l("SQLite 数据库"), abbreviate_home(&path), desc_size(bytes, count));
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), &meta, &theme::serif(12.0, false), &theme::ink_muted(), Some(1.0));
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + 26.0), &meta, &theme::serif(12.0, false), &theme::label_secondary(), Some(1.0));
         hit_button(view, &mut hotspots, &l("查看"), CGPoint::new(row.0.x + col_w - 32.0 - 70.0, row.0.y + 8.0), Choice::OpenStore, 70.0, false);
     });
     let has_imported = store::read(|s| s.items.iter().any(|it| it.source_app_name.as_deref() == Some(store::IMPORT_SOURCE_NAME)));
     sheet_header(view, &mut y2, col2, col_w, &l("导入"));
     sheet(view, &mut y2, col2, col_w, if has_imported || state.import_note.is_some() { 2 } else { 1 }, |v, y_pos| {
         let row = sheet_row(y_pos, col2, col_w, 0);
-        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("从其他剪贴板工具导入（SQLite）"), &theme::serif(15.0, false), &theme::ink(), None);
+        text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("从其他剪贴板工具导入（SQLite）"), &theme::serif(15.0, false), &theme::label(), None);
         if let Some(n) = &state.import_note {
             let font = theme::serif(12.0, false);
             let w = crate::shelf::card::measure(n, &font, 220.0, None).width.min(200.0);
-            text(v, CGPoint::new(row.0.x + col_w - 32.0 - 120.0 - w - 8.0, row.0.y + 12.0), n, &font, &theme::ink_muted(), Some(1.0));
+            text(v, CGPoint::new(row.0.x + col_w - 32.0 - 120.0 - w - 8.0, row.0.y + 12.0), n, &font, &theme::label_secondary(), Some(1.0));
         }
         hit_button(view, &mut hotspots, &l("选择数据库…"), CGPoint::new(row.0.x + col_w - 32.0 - 120.0, row.0.y + 6.0), Choice::ImportDb, 120.0, false);
         if has_imported {
             let row = sheet_row(y_pos, col2, col_w, 1);
-            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("移除所有导入进来的条目（来源为「导入」）"), &theme::serif(15.0, false), &theme::ink(), None);
+            text(v, CGPoint::new(row.0.x + SHEET_PAD, row.0.y + (row.1 - line_height_f()) / 2.0), &l("移除所有导入进来的条目（来源为「导入」）"), &theme::serif(15.0, false), &theme::label(), None);
             hit_button(view, &mut hotspots, &l("移除"), CGPoint::new(row.0.x + col_w - 32.0 - 80.0, row.0.y + 6.0), Choice::RemoveImported, 80.0, false);
         }
     });
@@ -531,7 +531,7 @@ fn line_height_f() -> f64 {
 fn sheet_header(view: &SettingsView, y: &mut f64, col_x: f64, _col_w: f64, title: &str) {
     *y += 12.0;
     let font = theme::serif(13.0, true);
-    text(view, CGPoint::new(col_x + SHEET_PAD, *y), title, &font, &theme::ink_muted(), None);
+    text(view, CGPoint::new(col_x + SHEET_PAD, *y), title, &font, &theme::label_secondary(), None);
     *y += 22.0;
 }
 
@@ -552,7 +552,7 @@ fn sheet(
         let s = crate::shelf::card::shadow(&NSColor::blackColor().colorWithAlphaComponent(0.35), 8.0, 1.0, 4.0);
         s.set();
         let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 6.0, 6.0);
-        theme::draw_paper(&path, &theme::paper());
+        theme::draw_surface(&path, &theme::surface());
         NSGraphicsContext::restoreGraphicsState_class();
     }
     *y = sheet_y;
@@ -592,7 +592,7 @@ fn hit_text(
 ) {
     if opaque {
         let capsule = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, rect.size.height / 2.0, rect.size.height / 2.0);
-        theme::on_brown().colorWithAlphaComponent(0.4).setStroke();
+        theme::label().colorWithAlphaComponent(0.4).setStroke();
         capsule.setLineWidth(1.0);
         capsule.stroke();
     }
@@ -622,10 +622,10 @@ fn hit_button(
     let w = width.max(tw + 24.0);
     let rect = CGRect::new(origin, CGSize::new(w, 24.0));
     let capsule = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 12.0, 12.0);
-    theme::ink().colorWithAlphaComponent(if disabled { 0.25 } else { 0.6 }).setStroke();
+    theme::label().colorWithAlphaComponent(if disabled { 0.25 } else { 0.6 }).setStroke();
     capsule.setLineWidth(1.0);
     capsule.stroke();
-    let color = theme::ink().colorWithAlphaComponent(if disabled { 0.4 } else { 1.0 });
+    let color = theme::label().colorWithAlphaComponent(if disabled { 0.4 } else { 1.0 });
     crate::shelf::card::draw_line_centered(title, &font, &color, rect.min().x + 12.0, rect.mid().y, tw + 1.0);
     if !disabled {
         hotspots.push(Hot::Row(rect, choice));
@@ -640,13 +640,13 @@ fn tag(_view: &SettingsView, origin: CGPoint, text_s: &str, on: bool) {
     let rect = CGRect::new(origin, CGSize::new(tw + 16.0, h));
     let capsule = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, h / 2.0, h / 2.0);
     if on {
-        theme::paper_blue().setFill();
+        theme::accent().setFill();
         capsule.fill();
     }
-    theme::ink().colorWithAlphaComponent(if on { 0.25 } else { 0.5 }).setStroke();
+    theme::label().colorWithAlphaComponent(if on { 0.25 } else { 0.5 }).setStroke();
     capsule.setLineWidth(1.0);
     capsule.stroke();
-    crate::shelf::card::draw_line_centered(text_s, &font, &theme::ink(), rect.min().x + 8.0, rect.mid().y, tw + 1.0);
+    crate::shelf::card::draw_line_centered(text_s, &font, &theme::label(), rect.min().x + 8.0, rect.mid().y, tw + 1.0);
 }
 
 /// PaperToggle look (44×24) anchored to the right edge.
@@ -659,9 +659,9 @@ fn switch_control(view: &SettingsView, hotspots: &mut Vec<Hot>, origin: CGPoint,
     let rect = CGRect::new(origin, CGSize::new(44.0, 24.0));
     let r = 12.0;
     let capsule = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, r, r);
-    (if on { theme::paper_blue() } else { theme::paper_dim() }).setFill();
+    (if on { theme::accent() } else { theme::surface_alt() }).setFill();
     capsule.fill();
-    theme::ink().colorWithAlphaComponent(if on { 0.35 } else { 0.5 }).setStroke();
+    theme::label().colorWithAlphaComponent(if on { 0.35 } else { 0.5 }).setStroke();
     capsule.setLineWidth(1.0);
     capsule.stroke();
     let knob_d = 20.0;
@@ -671,11 +671,11 @@ fn switch_control(view: &SettingsView, hotspots: &mut Vec<Hot>, origin: CGPoint,
         NSGraphicsContext::saveGraphicsState_class();
         let shadow = crate::shelf::card::shadow(&NSColor::blackColor().colorWithAlphaComponent(0.25), 1.5, 0.0, 1.0);
         shadow.set();
-        theme::paper().setFill();
+        theme::surface().setFill();
         knob.fill();
         NSGraphicsContext::restoreGraphicsState_class();
     }
-    theme::ink().colorWithAlphaComponent(0.45).setStroke();
+    theme::label().colorWithAlphaComponent(0.45).setStroke();
     knob.setLineWidth(1.0);
     knob.stroke();
     let _ = view;
@@ -716,12 +716,12 @@ fn segment_choice(
                 10.0,
                 10.0,
             );
-            theme::paper_blue().setFill();
+            theme::accent().setFill();
             capsule.fill();
         }
         let font = if is_sel { &font13b } else { &font13 };
         let tw = crate::shelf::card::measure(title, font, 400.0, None).width;
-        crate::shelf::card::draw_line_centered(title, font, &theme::ink(), rect.min().x + (rect.size.width - tw) / 2.0, rect.mid().y, tw + 1.0);
+        crate::shelf::card::draw_line_centered(title, font, &theme::label(), rect.min().x + (rect.size.width - tw) / 2.0, rect.mid().y, tw + 1.0);
         hotspots.push(Hot::Row(rect, *choice));
         x += w + 4.0;
     }
@@ -730,7 +730,7 @@ fn segment_choice(
         15.0,
         15.0,
     );
-    theme::ink().colorWithAlphaComponent(0.5).setStroke();
+    theme::label().colorWithAlphaComponent(0.5).setStroke();
     outline.setLineWidth(1.0);
     outline.stroke();
 }
@@ -760,12 +760,12 @@ fn retention_segments(_view: &SettingsView, hotspots: &mut Vec<Hot>, prefs: &pre
                 10.0,
                 10.0,
             );
-            theme::paper_blue().setFill();
+            theme::accent().setFill();
             capsule.fill();
         }
         let font = if sel == *days { &fonts.1 } else { &fonts.0 };
         let tw = crate::shelf::card::measure(title, font, 200.0, None).width;
-        crate::shelf::card::draw_line_centered(title, font, &theme::ink(), rect.min().x + (rect.size.width - tw) / 2.0, rect.mid().y, tw + 1.0);
+        crate::shelf::card::draw_line_centered(title, font, &theme::label(), rect.min().x + (rect.size.width - tw) / 2.0, rect.mid().y, tw + 1.0);
         hotspots.push(Hot::Row(rect, Choice::Retention(*days)));
         x += w + 4.0;
     }
@@ -774,7 +774,7 @@ fn retention_segments(_view: &SettingsView, hotspots: &mut Vec<Hot>, prefs: &pre
         15.0,
         15.0,
     );
-    theme::ink().colorWithAlphaComponent(0.5).setStroke();
+    theme::label().colorWithAlphaComponent(0.5).setStroke();
     outline.setLineWidth(1.0);
     outline.stroke();
 }
@@ -786,13 +786,13 @@ fn hour_wheel(_view: &SettingsView, hotspots: &mut Vec<Hot>, prefs: &preferences
     let rect = CGRect::new(origin_right, CGSize::new(96.0, 26.0));
     let alpha = if active { 1.0 } else { 0.35 };
     let font = objc2_app_kit::NSFont::monospacedDigitSystemFontOfSize_weight(13.5, 0.5);
-    theme::ink().colorWithAlphaComponent(0.5).setStroke();
+    theme::label().colorWithAlphaComponent(0.5).setStroke();
     NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 13.0, 13.0).stroke();
     crate::shelf::card::draw_text(
         CGRect::new(CGPoint::new(rect.min().x + 12.0, rect.min().y + (26.0 - crate::shelf::card::line_height(&font)) / 2.0), CGSize::new(58.0, crate::shelf::card::line_height(&font))),
         &format!("{:02}:00", hour),
         &font,
-        &theme::ink().colorWithAlphaComponent(alpha),
+        &theme::label().colorWithAlphaComponent(alpha),
         None,
     );
     for (dy, choice, name) in [
@@ -800,7 +800,7 @@ fn hour_wheel(_view: &SettingsView, hotspots: &mut Vec<Hot>, prefs: &preferences
         (13.0, 98i64, "chevron.down"),
     ] {
         let r = CGRect::new(CGPoint::new(rect.max().x - 24.0, rect.min().y + dy), CGSize::new(18.0, 11.0));
-        if let Some(img) = crate::shelf::card::symbol(name, 8.0, crate::shelf::card::SymbolWeight::Semibold, &theme::ink_muted()) {
+        if let Some(img) = crate::shelf::card::symbol(name, 8.0, crate::shelf::card::SymbolWeight::Semibold, &theme::label_secondary()) {
             crate::shelf::card::draw_centered(&img, r, alpha);
         }
         if active {
@@ -836,17 +836,17 @@ fn recorder_row(_view: &SettingsView, hotspots: &mut Vec<Hot>, which: &'static s
     let rect = CGRect::new(CGPoint::new(origin_x, origin_right.y), CGSize::new(w, 26.0));
     let capsule = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 13.0, 13.0);
     if capturing {
-        theme::paper_blue().setFill();
+        theme::accent().setFill();
         capsule.fill();
     }
-    theme::ink().colorWithAlphaComponent(0.6).setStroke();
+    theme::label().colorWithAlphaComponent(0.6).setStroke();
     capsule.setLineWidth(1.0);
     capsule.stroke();
-    let color = if shortcut.is_set() || capturing { theme::ink() } else { theme::ink_muted() };
+    let color = if shortcut.is_set() || capturing { theme::label() } else { theme::label_secondary() };
     crate::shelf::card::draw_line_centered(&text, &font, &color, rect.min().x + 12.0, rect.mid().y, tw + 1.0);
     if show_clear {
         let clear_rect = CGRect::new(CGPoint::new(rect.max().x - 16.0, rect.min().y + 5.0), CGSize::new(16.0, 16.0));
-        if let Some(img) = crate::shelf::card::symbol("xmark.circle.fill", 13.0, crate::shelf::card::SymbolWeight::Regular, &theme::ink_muted()) {
+        if let Some(img) = crate::shelf::card::symbol("xmark.circle.fill", 13.0, crate::shelf::card::SymbolWeight::Regular, &theme::label_secondary()) {
             crate::shelf::card::draw_centered(&img, clear_rect, 1.0);
         }
         hotspots.push(Hot::Clear(clear_rect, which));
@@ -869,7 +869,7 @@ fn recorder_row(_view: &SettingsView, hotspots: &mut Vec<Hot>, which: &'static s
             CGRect::new(CGPoint::new(origin_x - 8.0 - w_n, origin_right.y + 4.0), CGSize::new(w_n + 1.0, crate::shelf::card::line_height(&font_n))),
             &n,
             &font_n,
-            &theme::ink_muted(),
+            &theme::label_secondary(),
             Some(1.0),
         );
     }

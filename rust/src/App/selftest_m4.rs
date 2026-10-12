@@ -363,7 +363,7 @@ fn annotationtext_live(ok: &mut Checks, out: &str, original: &Annotation, sample
     }) else {
         return false;
     };
-    objc2_core_graphics::CGContext::set_fill_color_with_color(Some(&ctx), Some(&theme::paper().CGColor()));
+    objc2_core_graphics::CGContext::set_fill_color_with_color(Some(&ctx), Some(&theme::surface().CGColor()));
     objc2_core_graphics::CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::ZERO, CGSize::new(w as f64, h as f64)));
     let Some(image) = objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx)) else {
         return false;

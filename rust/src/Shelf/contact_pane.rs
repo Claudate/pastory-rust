@@ -117,7 +117,7 @@ fn draw(view: &ContactView) {
         CGRect::new(CGPoint::new(cx, 18.0), CGSize::new(400.0, crate::shelf::card::line_height(&title_font))),
         &l("联系我"),
         &title_font,
-        &theme::on_brown(),
+        &theme::label(),
         None,
     );
     header_button(view, CGRect::new(CGPoint::new(cx + cw - 200.0, 18.0), CGSize::new(160.0, 36.0)), &format!("‹ {}", l("返回剪贴板")), Link::Back, true);
@@ -138,7 +138,7 @@ fn draw(view: &ContactView) {
 fn header_button(view: &ContactView, rect: CGRect, s: &str, link: Link, wide: bool) {
     let font = if wide { theme::serif(13.0, false) } else { theme::serif(16.0, false) };
     let capsule = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 18.0, 18.0);
-    theme::on_brown().colorWithAlphaComponent(0.4).setStroke();
+    theme::label().colorWithAlphaComponent(0.4).setStroke();
     capsule.setLineWidth(1.0);
     capsule.stroke();
     let h = crate::shelf::card::line_height(&font);
@@ -147,7 +147,7 @@ fn header_button(view: &ContactView, rect: CGRect, s: &str, link: Link, wide: bo
         CGRect::new(CGPoint::new(rect.min().x + (rect.size.width - tw) / 2.0, rect.min().y + (rect.size.height - h) / 2.0), CGSize::new(tw + 1.0, h)),
         s,
         &font,
-        &theme::on_brown(),
+        &theme::label(),
         None,
     );
     view.ivars().hits.borrow_mut().push((link, rect));
@@ -166,20 +166,18 @@ fn sheet(view: &ContactView, x: f64, y: f64, title: &str, line: &str, art: Sheet
     {
         objc2_app_kit::NSGraphicsContext::saveGraphicsState_class();
         crate::shelf::card::shadow(&objc2_app_kit::NSColor::blackColor().colorWithAlphaComponent(0.35), 8.0, 1.0, 4.0).set();
-        theme::paper().setFill();
-        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 6.0, 6.0).fill();
+        theme::surface().setFill();
+        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, theme::RADIUS_CARD, theme::RADIUS_CARD).fill();
         objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
     }
-    // Torn brown label.
-    let font = theme::serif(13.0, true);
+    // Section title: plain secondary type, nothing drawn behind it.
+    let font = theme::semibold(13.0);
     let tw = crate::shelf::card::measure(title, &font, 400.0, None).width;
     let label = CGRect::new(
         CGPoint::new(rect.min().x + 16.0, rect.min().y + 14.0),
         CGSize::new(tw + 20.0, crate::shelf::card::line_height(&font) + 6.0),
     );
-    theme::brown().setFill();
-    theme::torn_paper_path(label, true, true, true, true, 21, 1.4, 6.0).fill();
-    crate::shelf::card::draw_line_centered(title, &font, &theme::on_brown(), label.min().x + 10.0, label.mid().y, tw + 1.0);
+    crate::shelf::card::draw_line_centered(title, &font, &theme::label_secondary(), label.min().x, label.mid().y, tw + 1.0);
     // One-line hint (fixed 44pt).
     crate::shelf::card::draw_text(
         CGRect::new(
@@ -188,7 +186,7 @@ fn sheet(view: &ContactView, x: f64, y: f64, title: &str, line: &str, art: Sheet
         ),
         line,
         &theme::serif(14.0, false),
-        &theme::ink(),
+        &theme::label(),
         Some(1.0),
     );
     // The slot (QR or the link capsule).
@@ -234,9 +232,9 @@ fn sheet(view: &ContactView, x: f64, y: f64, title: &str, line: &str, art: Sheet
             );
             objc2_app_kit::NSColor::whiteColor().setFill();
             NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(cell, 14.0, 14.0).fill();
-            theme::ink().colorWithAlphaComponent(0.35).setStroke();
+            theme::label().colorWithAlphaComponent(0.35).setStroke();
             NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(cell, 14.0, 14.0).stroke();
-            crate::shelf::card::draw_line_centered(&text, &font, &theme::ink(), cell.min().x + 14.0, cell.mid().y, tw + 1.0);
+            crate::shelf::card::draw_line_centered(&text, &font, &theme::label(), cell.min().x + 14.0, cell.mid().y, tw + 1.0);
             view.ivars().hits.borrow_mut().push((link, cell));
         }
     }

@@ -4,7 +4,7 @@
 //! the shelf card; height follows the content (text capped at 60% of the
 //! screen, scrolling inside the card only).
 //!
-//! One `NoteView` draws the whole note (paper + pushpin + header + title +
+//! One `NoteView` draws the whole note (surface + header + title +
 //! kind content + perforation + caption + the 编辑/图层/关闭 slots) and
 //! routes clicks through hit rects; `desktop_notes.rs` owns the windows
 //! (move/resize happen at the window level, like the Swift NoteWindow).
@@ -162,22 +162,13 @@ fn draw_note(view: &NoteView) {
     {
         objc2_app_kit::NSGraphicsContext::saveGraphicsState_class();
         crate::shelf::card::shadow(&objc2_app_kit::NSColor::blackColor().colorWithAlphaComponent(0.22), 6.0, 1.0, 3.0).set();
-        theme::paper().setFill();
+        theme::surface().setFill();
         NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(paper, 6.0, 6.0).fill();
         objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
     }
     let Some(item) = view.item() else { return };
-    if let Some(pin) = theme::pushpin() {
-        let h = 40.0f64.min(pin.size().height.max(1.0));
-        let w = h * pin.size().width / pin.size().height.max(1.0);
-        let rect = CGRect::new(CGPoint::new(paper.mid().x - w / 2.0, paper.min().y - 6.0), CGSize::new(w, h));
-        objc2_app_kit::NSGraphicsContext::saveGraphicsState_class();
-        crate::shelf::card::shadow(&objc2_app_kit::NSColor::blackColor().colorWithAlphaComponent(0.28), 2.0, 1.0, 2.0).set();
-        crate::shelf::card::draw_centered(&pin, rect, 1.0);
-        objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
-    }
     // Resize grip: three short diagonals at the bottom-right band.
-    theme::ink().colorWithAlphaComponent(0.35).setStroke();
+    theme::label().colorWithAlphaComponent(0.35).setStroke();
     for k in [4.0f64, 8.0, 12.0] {
         let path = NSBezierPath::new();
         path.moveToPoint(CGPoint::new(b.max().x - margin - k, b.max().y - margin));
@@ -193,7 +184,7 @@ fn draw_content(view: &NoteView, item: &ClipItem, paper: CGRect) {
     if let Some(icon) = theme::card_icon(item.source_bundle_id.as_deref()) {
         let image = CGRect::new(CGPoint::new(paper.min().x + SIDE, y - 10.0), CGSize::new(20.0, 20.0));
         crate::shelf::card::draw_centered(&icon, image, 1.0);
-    } else if let Some(img) = crate::shelf::card::symbol("doc.on.clipboard", 13.0, crate::shelf::card::SymbolWeight::Regular, &theme::ink()) {
+    } else if let Some(img) = crate::shelf::card::symbol("doc.on.clipboard", 13.0, crate::shelf::card::SymbolWeight::Regular, &theme::label()) {
         crate::shelf::card::draw_centered(&img, CGRect::new(CGPoint::new(paper.min().x + SIDE, y - 10.0), CGSize::new(20.0, 20.0)), 1.0);
     }
     let name = crate::shelf::card::source_title(item);
@@ -201,15 +192,15 @@ fn draw_content(view: &NoteView, item: &ClipItem, paper: CGRect) {
         CGRect::new(CGPoint::new(paper.min().x + SIDE + 28.0, y - 8.0), CGSize::new(180.0, 22.0)),
         &name,
         &theme::serif(15.0, false),
-        &theme::ink(),
+        &theme::label(),
         None,
     );
     let when = crate::shelf::card::when(item.created_at);
     let time_font = theme::serif(13.0, false);
     let tw = crate::shelf::card::measure(&when, &time_font, 200.0, None).width;
-    crate::shelf::card::draw_line_centered(&when, &time_font, &theme::ink().colorWithAlphaComponent(0.7), paper.max().x - SIDE - tw, y + 2.0, tw + 1.0);
+    crate::shelf::card::draw_line_centered(&when, &time_font, &theme::label().colorWithAlphaComponent(0.7), paper.max().x - SIDE - tw, y + 2.0, tw + 1.0);
     y += 8.0;
-    theme::ink().colorWithAlphaComponent(0.7).setFill();
+    theme::label().colorWithAlphaComponent(0.7).setFill();
     NSBezierPath::bezierPathWithRect(CGRect::new(
         CGPoint::new(paper.min().x + SIDE, y),
         CGSize::new(paper.size.width - SIDE * 2.0, 1.0),
@@ -221,10 +212,10 @@ fn draw_content(view: &NoteView, item: &ClipItem, paper: CGRect) {
                 CGRect::new(CGPoint::new(paper.min().x + SIDE, y + 6.0), CGSize::new(paper.size.width - SIDE * 2.0, 26.0)),
                 title,
                 &theme::script(20.0),
-                &theme::ink(),
+                &theme::label(),
                 None,
             );
-            theme::ink().colorWithAlphaComponent(0.6).setFill();
+            theme::label().colorWithAlphaComponent(0.6).setFill();
             NSBezierPath::bezierPathWithRect(CGRect::new(
                 CGPoint::new(paper.min().x + SIDE, y + 6.0 + 26.0 + 3.0),
                 CGSize::new(paper.size.width - SIDE * 2.0, 1.0),
@@ -241,7 +232,7 @@ fn draw_content(view: &NoteView, item: &ClipItem, paper: CGRect) {
         CGSize::new(paper.size.width - SIDE * 2.0, (content_bottom - content_top).max(0.0)),
     );
     draw_kind(inner, item);
-    theme::ink().colorWithAlphaComponent(0.7).setStroke();
+    theme::label().colorWithAlphaComponent(0.7).setStroke();
     let dash: [f64; 2] = [3.0, 4.0];
     let perf = NSBezierPath::new();
     let y_perf = paper.max().y - caption_h + 0.5;
@@ -257,7 +248,7 @@ fn draw_content(view: &NoteView, item: &ClipItem, paper: CGRect) {
         CGRect::new(CGPoint::new(paper.min().x + SIDE, cap_y + 10.0), CGSize::new(150.0, 22.0)),
         &label,
         &theme::serif(13.0, false),
-        &theme::ink_muted(),
+        &theme::label_secondary(),
         None,
     );
     if *view.ivars().show_copied.borrow() {
@@ -271,32 +262,32 @@ fn draw_content(view: &NoteView, item: &ClipItem, paper: CGRect) {
             CGPoint::new(paper.max().x - 8.0 - three_slots - cell_w, cap_y + (40.0 - cell_h) / 2.0),
             CGSize::new(cell_w, cell_h),
         );
-        theme::ink().colorWithAlphaComponent(0.8).setStroke();
+        theme::label().colorWithAlphaComponent(0.8).setStroke();
         NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(chip, cell_h / 2.0, cell_h / 2.0).stroke();
-        if let Some(img) = crate::shelf::card::symbol("checkmark", 10.0, crate::shelf::card::SymbolWeight::Semibold, &theme::ink()) {
+        if let Some(img) = crate::shelf::card::symbol("checkmark", 10.0, crate::shelf::card::SymbolWeight::Semibold, &theme::label()) {
             crate::shelf::card::draw_centered(&img, CGRect::new(CGPoint::new(chip.min().x + 10.0, chip.min().y + (cell_h - 12.0) / 2.0), CGSize::new(12.0, 12.0)), 1.0);
         }
-        crate::shelf::card::draw_line_centered(&chip_text, &chip_font, &theme::ink(), chip.min().x + 10.0 + 12.0 + 5.0, chip.mid().y, tw + 1.0);
+        crate::shelf::card::draw_line_centered(&chip_text, &chip_font, &theme::label(), chip.min().x + 10.0 + 12.0 + 5.0, chip.mid().y, tw + 1.0);
     }
     let on_top = crate::shelf::desktop_notes::is_on_top(&item.id);
     let mut ax = paper.max().x - 8.0;
     ax -= 30.0;
     let close_rect = CGRect::new(CGPoint::new(ax, cap_y + 5.0), CGSize::new(30.0, 30.0));
-    if let Some(img) = crate::shelf::card::symbol("xmark", 14.0, crate::shelf::card::SymbolWeight::Regular, &theme::ink()) {
+    if let Some(img) = crate::shelf::card::symbol("xmark", 14.0, crate::shelf::card::SymbolWeight::Regular, &theme::label()) {
         crate::shelf::card::draw_centered(&img, close_rect, 1.0);
     }
     hit(view, NoteAction::Close, close_rect);
     ax -= 30.0;
     let layer_rect = CGRect::new(CGPoint::new(ax, cap_y + 5.0), CGSize::new(30.0, 30.0));
     let layer_icon = if on_top { "square.3.layers.3d.top.filled" } else { "square.3.layers.3d.bottom.filled" };
-    if let Some(img) = crate::shelf::card::symbol(layer_icon, 14.0, crate::shelf::card::SymbolWeight::Regular, &theme::ink()) {
+    if let Some(img) = crate::shelf::card::symbol(layer_icon, 14.0, crate::shelf::card::SymbolWeight::Regular, &theme::label()) {
         crate::shelf::card::draw_centered(&img, layer_rect, 1.0);
     }
     hit(view, NoteAction::Layer, layer_rect);
     if matches!(item.kind, ClipKind::Text | ClipKind::Url | ClipKind::Image) {
         ax -= 30.0;
         let edit_rect = CGRect::new(CGPoint::new(ax, cap_y + 5.0), CGSize::new(30.0, 30.0));
-        if let Some(img) = crate::shelf::card::symbol("pencil", 14.0, crate::shelf::card::SymbolWeight::Regular, &theme::ink()) {
+        if let Some(img) = crate::shelf::card::symbol("pencil", 14.0, crate::shelf::card::SymbolWeight::Regular, &theme::label()) {
             crate::shelf::card::draw_centered(&img, edit_rect, 1.0);
         }
         hit(view, NoteAction::Edit, edit_rect);
@@ -317,7 +308,7 @@ fn draw_kind(inner: CGRect, item: &ClipItem) {
     match item.kind {
         ClipKind::Text => {
             let text = crate::clipboard::store::read(|s| s.text(item).unwrap_or_default());
-            crate::shelf::card::draw_text(inner, &text, &theme::serif(14.0, false), &theme::ink(), Some(5.0));
+            crate::shelf::card::draw_text(inner, &text, &theme::serif(14.0, false), &theme::label(), Some(5.0));
         }
         ClipKind::Url => {
             let host = item
@@ -329,14 +320,14 @@ fn draw_kind(inner: CGRect, item: &ClipItem) {
                 CGRect::new(CGPoint::new(inner.min().x, inner.min().y + 4.0), CGSize::new(inner.size.width, 24.0)),
                 host,
                 &theme::serif(15.0, true),
-                &theme::ink(),
+                &theme::label(),
                 None,
             );
             crate::shelf::card::draw_text(
                 CGRect::new(CGPoint::new(inner.min().x, inner.min().y + 30.0), CGSize::new(inner.size.width, inner.size.height - 30.0)),
                 &item.snippet,
                 &theme::serif(13.0, false),
-                &theme::paper_blue_deep(),
+                &theme::accent(),
                 Some(1.0),
             );
         }
@@ -348,7 +339,7 @@ fn draw_kind(inner: CGRect, item: &ClipItem) {
                     CGRect::new(CGPoint::new(inner.min().x, y), CGSize::new(inner.size.width, 20.0)),
                     &truncate_middle(line, 30),
                     &font,
-                    &theme::ink(),
+                    &theme::label(),
                     None,
                 );
                 y += 20.0;
@@ -392,7 +383,7 @@ fn draw_kind(inner: CGRect, item: &ClipItem) {
                 }
             } else {
                 let icon = if item.kind == ClipKind::Video { "film" } else { "photo" };
-                if let Some(img) = crate::shelf::card::symbol(icon, 34.0, crate::shelf::card::SymbolWeight::Light, &theme::ink_muted().colorWithAlphaComponent(0.5)) {
+                if let Some(img) = crate::shelf::card::symbol(icon, 34.0, crate::shelf::card::SymbolWeight::Light, &theme::label_secondary().colorWithAlphaComponent(0.5)) {
                     crate::shelf::card::draw_centered(&img, CGRect::new(
                         CGPoint::new(inner.mid().x - 20.0, inner.min().y + (inner.size.height - 40.0).max(40.0) / 2.0),
                         CGSize::new(40.0, 40.0),

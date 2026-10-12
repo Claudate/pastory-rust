@@ -1,7 +1,11 @@
-//! Port of `Shelf/ClipCardView.swift` — the paper ticket card, hand-drawn
-//! with AppKit calls instead of SwiftUI views. Geometry and values are copied
-//! one-for-one from the Swift view; every measurement in the render matches
-//! the Swift baseline to the pixel (see the slice-C verification notes).
+//! The clip card, hand-drawn with AppKit calls instead of SwiftUI views.
+//!
+//! 1.0.7 replaces the paper-ticket skin: one rounded rectangle per card
+//! (no punched notch on even cards), a hairline above the action stub in
+//! place of the dashed perforation, a rounded thumbnail well instead of a
+//! tilted white print, and a filled accent pin instead of a torn patch
+//! behind it. The layout metrics below are unchanged — they are what the
+//! Swift baseline pinned and the hit-testing still agrees with.
 //!
 //! All drawing assumes a flipped view (y grows downwards, like SwiftUI).
 
@@ -32,8 +36,6 @@ const CAPTION_H: f64 = 44.0;
 const HEADER_RULE_Y: f64 = 60.0;
 /// Title block total height (titleRowHeight 26 + top 4 + bottom 2).
 const TITLE_ROW_H: f64 = 32.0;
-const TICKET_RADIUS: f64 = 5.0;
-const NOTCH: f64 = 11.0;
 /// H pad on both card texts and rules; the photo print uses 16/14 instead.
 pub(crate) const PAD_X: f64 = 18.0;
 
@@ -112,10 +114,11 @@ pub fn action_rects(ticket: CGRect, kind: ClipKind) -> Vec<(ActionKind, CGRect)>
     out
 }
 
-/// The ticket outline (`TicketShape`, notch on even-indexed cards).
-pub fn ticket_path(ticket: CGRect, index: usize) -> Retained<NSBezierPath> {
-    let notch = if index % 2 == 0 { Some(STUB_H) } else { None };
-    theme::ticket_path(ticket, notch, TICKET_RADIUS, NOTCH)
+/// The card outline: one rounded rectangle for every card. The paper skin
+/// punched a notch into even-indexed cards; a uniform shape is what makes a
+/// shelf of cards read as one list rather than as stationery.
+pub fn card_path(ticket: CGRect) -> Retained<NSBezierPath> {
+    theme::rounded_rect(ticket, theme::RADIUS_CARD)
 }
 
 /// Title-row rect (still used for the inline editor placement).
@@ -418,7 +421,7 @@ fn url_host(s: &str) -> Option<String> {
 /// Draw the whole ticket with its top at `ticket.min_y` — the caller adds
 /// the selected -6pt shift by passing the shifted rect (mirrors `.offset`).
 pub fn draw(ticket: CGRect, d: &CardData) {
-    let path = ticket_path(ticket, d.index);
+    let path = card_path(ticket);
     // The sheet + its shadow, in one fill (SwiftUI `.background(ticket.fill…).
     NSGraphicsContext::saveGraphicsState_class();
     let sh = if d.selected {
@@ -428,11 +431,11 @@ pub fn draw(ticket: CGRect, d: &CardData) {
     };
     sh.set();
     let fill = if d.on_clipboard {
-        theme::paper_blue_tile()
+        theme::accent_tint()
     } else {
-        theme::paper_tile()
+        theme::surface()
     };
-    NSColor::colorWithPatternImage(&fill).setFill();
+    fill.setFill();
     path.fill();
     NSGraphicsContext::restoreGraphicsState_class();
 
@@ -446,12 +449,10 @@ pub fn draw(ticket: CGRect, d: &CardData) {
         y -= 0.0; // content starts directly under the header rule
     }
     content(ticket, d, y);
-    perforation(ticket);
+    stub_rule(ticket);
     caption_row(ticket, d);
     actions(ticket, d);
     NSGraphicsContext::restoreGraphicsState_class();
-
-    pushpin(ticket, d);
 }
 
 /// The header: app icon, source, time, then the 1pt rule.
@@ -468,7 +469,7 @@ fn header(ticket: CGRect, d: &CardData) {
             1.0,
         ),
         None => {
-            if let Some(img) = symbol("doc.on.clipboard", 13.0, SymbolWeight::Regular, &theme::ink()) {
+            if let Some(img) = symbol("doc.on.clipboard", 13.0, SymbolWeight::Regular, &theme::label()) {
                 draw_centered(&img, icon_rect, 1.0);
             }
         }
@@ -477,14 +478,14 @@ fn header(ticket: CGRect, d: &CardData) {
     let center_y = y0 + 30.0 + 11.0;
     // Time on the right edge (drawn first so the source title stays clear).
     let time_font = theme::serif(14.0, false);
-    let time_color = theme::ink().colorWithAlphaComponent(0.75);
+    let time_color = theme::label().colorWithAlphaComponent(0.75);
     let time = when(d.item.created_at);
     let tw = measure(&time, &time_font, 200.0, None).width;
     draw_line_centered(&time, &time_font, &time_color, x0 + CARD_W - PAD_X - tw, center_y, tw + 1.0);
     // M6 desktop notes: the note.text glyph sits between title and time.
     let mut right = x0 + CARD_W - PAD_X - tw - 8.0;
     if d.on_desktop {
-        if let Some(img) = symbol("note.text", 12.0, SymbolWeight::Medium, &theme::ink_muted()) {
+        if let Some(img) = symbol("note.text", 12.0, SymbolWeight::Medium, &theme::label_secondary()) {
             let w = img.size().width;
             draw_centered(
                 &img,
@@ -497,13 +498,13 @@ fn header(ticket: CGRect, d: &CardData) {
     draw_line_centered(
         &source_title(&d.item),
         &theme::serif(16.0, false),
-        &theme::ink(),
+        &theme::label(),
         text_x,
         center_y,
         (right - text_x).max(0.0),
     );
     // 1pt rule.
-    theme::ink().colorWithAlphaComponent(0.7).setFill();
+    theme::label().colorWithAlphaComponent(0.7).setFill();
     NSBezierPath::bezierPathWithRect(CGRect::new(
         CGPoint::new(x0 + PAD_X, y0 + HEADER_RULE_Y),
         CGSize::new(CARD_W - 2.0 * PAD_X, 1.0),
@@ -522,7 +523,7 @@ fn title(ticket: CGRect, d: &CardData) {
         draw_line_centered(
             t,
             &theme::script(20.0),
-            &theme::ink(),
+            &theme::label(),
             x0 + PAD_X,
             row_y + 4.0 + 13.0,
             CARD_W - 2.0 * PAD_X,
@@ -531,13 +532,13 @@ fn title(ticket: CGRect, d: &CardData) {
         draw_line_centered(
             &l("+ 加个标题"),
             &theme::script(17.0),
-            &theme::ink_muted().colorWithAlphaComponent(0.8),
+            &theme::label_secondary().colorWithAlphaComponent(0.8),
             x0 + PAD_X,
             row_y + 4.0 + 13.0,
             CARD_W - 2.0 * PAD_X,
         );
     }
-    theme::ink().colorWithAlphaComponent(0.6).setFill();
+    theme::label().colorWithAlphaComponent(0.6).setFill();
     NSBezierPath::bezierPathWithRect(CGRect::new(
         CGPoint::new(x0 + PAD_X, row_y + TITLE_ROW_H - 1.0),
         CGSize::new(CARD_W - 2.0 * PAD_X, 1.0),
@@ -559,7 +560,7 @@ fn content(ticket: CGRect, d: &CardData, top: f64) {
                     name,
                     34.0,
                     SymbolWeight::Regular,
-                    &theme::ink_muted().colorWithAlphaComponent(0.5),
+                    &theme::label_secondary().colorWithAlphaComponent(0.5),
                 ) {
                     draw_centered(
                         &img,
@@ -578,7 +579,7 @@ fn content(ticket: CGRect, d: &CardData, top: f64) {
             let icon_font_size = 12.0;
             let text_font = theme::serif(15.0, false);
             for line in d.item.snippet.lines().take(8) {
-                if let Some(img) = symbol("doc", icon_font_size, SymbolWeight::Regular, &theme::ink_muted()) {
+                if let Some(img) = symbol("doc", icon_font_size, SymbolWeight::Regular, &theme::label_secondary()) {
                     let th = line_height(&text_font);
                     draw_centered(
                         &img,
@@ -596,7 +597,7 @@ fn content(ticket: CGRect, d: &CardData, top: f64) {
                     ),
                     line,
                     &text_font,
-                    &theme::ink(),
+                    &theme::label(),
                     None,
                 );
                 y += line_height(&text_font) + 8.0;
@@ -613,7 +614,7 @@ fn content(ticket: CGRect, d: &CardData, top: f64) {
                     ),
                     &host,
                     &f,
-                    &theme::ink(),
+                    &theme::label(),
                     None,
                 );
                 y += line_height(&f) + 6.0;
@@ -626,7 +627,7 @@ fn content(ticket: CGRect, d: &CardData, top: f64) {
                 ),
                 &d.item.snippet,
                 &f,
-                &theme::paper_blue_deep(),
+                &theme::accent(),
                 None,
             );
         }
@@ -639,15 +640,15 @@ fn content(ticket: CGRect, d: &CardData, top: f64) {
                 ),
                 &d.item.snippet,
                 &f,
-                &theme::ink(),
+                &theme::label(),
                 Some(6.0),
             );
         }
     }
 }
 
-/// Photo print: white border, soft shadow, a slight tilt; video adds the
-/// play badge.
+/// Thumbnail well: a rounded, shadowed box with the image clipped into it;
+/// video adds the play badge.
 fn photo(ticket: CGRect, d: &CardData, top: f64, bottom: f64, img: &CGImage) {
     let x0 = ticket.min().x;
     let px_w = CGImage::width(Some(img)) as f64;
@@ -661,10 +662,8 @@ fn photo(ticket: CGRect, d: &CardData, top: f64, bottom: f64, img: &CGImage) {
     let scale = (avail_inner_w / px_w).min(avail_inner_h / px_h);
     let iw = px_w * scale;
     let ih = px_h * scale;
-    let photo_w = iw + 14.0;
-    let photo_h = ih + 14.0;
     // Title-less image/video cards center vertically; with a title (or text
-    // kinds) the print starts at the 16/14 padding.
+    // kinds) the thumbnail starts at the 16/14 padding.
     let has_title = d
         .item
         .title
@@ -673,38 +672,25 @@ fn photo(ticket: CGRect, d: &CardData, top: f64, bottom: f64, img: &CGImage) {
         .unwrap_or(false);
     let (px, py) = if !has_title {
         (
-            x0 + (CARD_W - photo_w) / 2.0,
-            top + 14.0 + ((bottom - top - 28.0 - photo_h) / 2.0).max(0.0),
+            x0 + (CARD_W - iw) / 2.0,
+            top + 14.0 + ((bottom - top - 28.0 - ih) / 2.0).max(0.0),
         )
     } else {
         (x0 + 16.0, top + 14.0)
     };
-    let photo = CGRect::new(CGPoint::new(px, py), CGSize::new(photo_w, photo_h));
+    let photo = CGRect::new(CGPoint::new(px, py), CGSize::new(iw, ih));
     let center = CGPoint::new(photo.mid().x, photo.mid().y);
+    // A soft shadow under the well, then the image clipped to the same
+    // rounded box — no print border, no tilt.
     NSGraphicsContext::saveGraphicsState_class();
-    // Rotate the canvas −1.6° around the photo's center.
-    if let Some(gc) = NSGraphicsContext::currentContext() {
-        let cg = gc.CGContext();
-        objc2_core_graphics::CGContext::translate_ctm(Some(&cg), center.x, center.y);
-        objc2_core_graphics::CGContext::rotate_ctm(Some(&cg), -1.6_f64.to_radians());
-        objc2_core_graphics::CGContext::translate_ctm(Some(&cg), -center.x, -center.y);
-    }
-    // White border with the photo shadow.
-    NSGraphicsContext::saveGraphicsState_class();
-    shadow(&NSColor::blackColor().colorWithAlphaComponent(0.3), 6.0, 1.0, 4.0).set();
-    NSColor::whiteColor().setFill();
-    NSBezierPath::bezierPathWithRect(photo).fill();
+    shadow(&NSColor::blackColor().colorWithAlphaComponent(0.22), 8.0, 0.0, 3.0).set();
+    theme::surface_alt().setFill();
+    theme::rounded_rect(photo, theme::RADIUS_CONTROL).fill();
     NSGraphicsContext::restoreGraphicsState_class();
+    NSGraphicsContext::saveGraphicsState_class();
+    theme::rounded_rect(photo, theme::RADIUS_CONTROL).addClip();
     let nsimg = NSImage::initWithCGImage_size(NSImage::alloc(), img, CGSize::new(px_w, px_h));
-    draw_image(
-        &nsimg,
-        CGRect::new(
-            CGPoint::new(px + 7.0, py + 7.0),
-            CGSize::new(iw, ih),
-        ),
-        objc2_app_kit::NSCompositingOperation::SourceOver,
-        1.0,
-    );
+    draw_image(&nsimg, photo, objc2_app_kit::NSCompositingOperation::SourceOver, 1.0);
     if d.item.kind == ClipKind::Video {
         // Play badge: 48pt half-black disc, white play glyph nudged 2pt right.
         let badge = CGRect::new(
@@ -727,20 +713,14 @@ fn photo(ticket: CGRect, d: &CardData, top: f64, bottom: f64, img: &CGImage) {
     NSGraphicsContext::restoreGraphicsState_class();
 }
 
-/// The dashed mid-line.
-fn perforation(ticket: CGRect) {
-    let y = ticket.max().y - STUB_H - 0.5;
-    let line = theme::line_path(CGRect::new(
-        CGPoint::new(ticket.min().x + PAD_X, y - 0.5),
+/// The hairline between the card body and the action stub.
+fn stub_rule(ticket: CGRect) {
+    theme::separator().setFill();
+    NSBezierPath::bezierPathWithRect(CGRect::new(
+        CGPoint::new(ticket.min().x + PAD_X, ticket.max().y - STUB_H - 0.5),
         CGSize::new(CARD_W - 2.0 * PAD_X, 1.0),
-    ));
-    theme::ink().colorWithAlphaComponent(0.7).setStroke();
-    line.setLineWidth(1.0);
-    unsafe {
-        let dash: [f64; 2] = [3.0, 4.0];
-        line.setLineDash_count_phase(dash.as_ptr(), 2, 0.0);
-    }
-    line.stroke();
+    ))
+    .fill();
 }
 
 /// `captionRow`: kind · note on the left, the 「已复制」 capsule on the blue
@@ -756,7 +736,7 @@ fn caption_row(ticket: CGRect, d: &CardData) {
         let chip_font = theme::serif(13.0, false);
         let label = l("已复制");
         let mut content_w = measure(&label, &chip_font, 200.0, None).width;
-        let check = symbol("checkmark", 10.0, SymbolWeight::Semibold, &theme::ink());
+        let check = symbol("checkmark", 10.0, SymbolWeight::Semibold, &theme::label());
         let check_w = check.as_ref().map(|i| i.size().width).unwrap_or(0.0);
         content_w += 5.0 + check_w;
         let chip_w = content_w + 20.0;
@@ -770,7 +750,7 @@ fn caption_row(ticket: CGRect, d: &CardData) {
             chip_h / 2.0,
             chip_h / 2.0,
         );
-        theme::ink().colorWithAlphaComponent(0.8).setStroke();
+        theme::label().colorWithAlphaComponent(0.8).setStroke();
         capsule.setLineWidth(1.0);
         capsule.stroke();
         if let Some(c) = &check {
@@ -786,7 +766,7 @@ fn caption_row(ticket: CGRect, d: &CardData) {
         draw_line_centered(
             &label,
             &chip_font,
-            &theme::ink(),
+            &theme::label(),
             chip.min().x + 10.0 + check_w + 5.0,
             row_y + CAPTION_H / 2.0,
             content_w,
@@ -796,12 +776,12 @@ fn caption_row(ticket: CGRect, d: &CardData) {
     draw_line_centered(
         &text,
         &font,
-        &theme::ink(),
+        &theme::label(),
         x0 + PAD_X,
         row_y + CAPTION_H / 2.0,
         (right - x0 - PAD_X).max(0.0),
     );
-    theme::ink().colorWithAlphaComponent(0.7).setFill();
+    theme::label().colorWithAlphaComponent(0.7).setFill();
     NSBezierPath::bezierPathWithRect(CGRect::new(
         CGPoint::new(x0 + PAD_X, row_y + CAPTION_H - 1.0),
         CGSize::new(CARD_W - 2.0 * PAD_X, 1.0),
@@ -811,13 +791,13 @@ fn caption_row(ticket: CGRect, d: &CardData) {
 
 /// The stub: action buttons with thin uprights.
 fn actions(ticket: CGRect, d: &CardData) {
-    let ink = theme::ink();
+    let ink = theme::label();
     let row_top = ticket.max().y - (STUB_H - CAPTION_H);
     let center_y = row_top + (STUB_H - CAPTION_H) / 2.0;
     for (kind, rect) in action_rects(ticket, d.item.kind) {
         match kind {
             ActionKind::Divider => {
-                theme::ink().colorWithAlphaComponent(0.35).setFill();
+                theme::label().colorWithAlphaComponent(0.35).setFill();
                 NSBezierPath::bezierPathWithRect(CGRect::new(
                     CGPoint::new(rect.min().x, center_y - 11.0),
                     CGSize::new(1.0, 22.0),
@@ -849,30 +829,11 @@ fn actions(ticket: CGRect, d: &CardData) {
     }
 }
 
-/// `pinAction`: pinned = a small torn patch behind a contrasted pin.
+/// `pinAction`: the pinned state is carried by the glyph itself (filled, in
+/// the accent colour), not by a patch drawn behind it.
 fn pin_button(rect: CGRect, center_y: f64, d: &CardData) {
     let pinned = d.item.pinned;
-    let (glyph_color, patch_fill) = if pinned {
-        if d.on_clipboard {
-            (theme::paper_blue_deep(), theme::paper_tile())
-        } else {
-            (theme::paper(), theme::paper_blue_tile())
-        }
-    } else {
-        (theme::ink(), theme::paper_tile())
-    };
-    if pinned {
-        // Torn patch 34×30 behind the glyph, contrasting paper + tight shadow.
-        let patch_rect = CGRect::new(
-            CGPoint::new(rect.min().x + (rect.size.width - 34.0) / 2.0, center_y - 15.0),
-            CGSize::new(34.0, 30.0),
-        );
-        NSGraphicsContext::saveGraphicsState_class();
-        shadow(&NSColor::blackColor().colorWithAlphaComponent(0.25), 2.0, 0.0, 1.0).set();
-        NSColor::colorWithPatternImage(&patch_fill).setFill();
-        theme::torn_paper_path(patch_rect, true, true, true, true, 77, 1.5, 5.0).fill();
-        NSGraphicsContext::restoreGraphicsState_class();
-    }
+    let glyph_color = if pinned { theme::accent() } else { theme::label() };
     let name = if pinned { "pin.fill" } else { "pin" };
     if let Some(img) = symbol(name, 17.0, SymbolWeight::Regular, &glyph_color) {
         draw_centered(
@@ -886,32 +847,4 @@ fn pin_button(rect: CGRect, center_y: f64, d: &CardData) {
     }
 }
 
-/// The pushpin through the top of the highlighted card.
-fn pushpin(ticket: CGRect, d: &CardData) {
-    if !d.selected {
-        return;
-    }
-    let Some(img) = theme::pushpin() else {
-        return;
-    };
-    let size = img.size();
-    if size.height <= 0.0 {
-        return;
-    }
-    let scale = 44.0 / size.height;
-    let w = size.width * scale;
-    let rect = CGRect::new(
-        CGPoint::new(ticket.min().x + (CARD_W - w) / 2.0, ticket.min().y - 6.0),
-        CGSize::new(w, 44.0),
-    );
-    NSGraphicsContext::saveGraphicsState_class();
-    shadow(&NSColor::blackColor().colorWithAlphaComponent(0.28), 2.0, 1.0, 2.0).set();
-    draw_image(
-        &img,
-        rect,
-        objc2_app_kit::NSCompositingOperation::SourceOver,
-        1.0,
-    );
-    NSGraphicsContext::restoreGraphicsState_class();
-}
 

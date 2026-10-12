@@ -394,7 +394,7 @@ pub fn text_natural_width(text: &str, size: StrokeSize) -> f64 {
 
 pub fn measure_hand_text(text: &str, size: StrokeSize) -> f64 {
     let font = hand_font(size.font_size());
-    let dict = crate::shelf::card::attrs(&font, &theme::ink(), None);
+    let dict = crate::shelf::card::attrs(&font, &theme::label(), None);
     unsafe {
         use objc2_app_kit::NSStringDrawing;
         NSString::from_str(text).sizeWithAttributes(Some(&dict)).width
@@ -417,7 +417,7 @@ pub fn palette() -> Vec<Retained<NSColor>> {
 
 /// `AnnotatePalette.accent`.
 pub fn palette_accent() -> Retained<NSColor> {
-    theme::paper_blue_deep()
+    theme::accent()
 }
 
 /// `NSColor.isLight` — luma past 0.7 in sRGB.

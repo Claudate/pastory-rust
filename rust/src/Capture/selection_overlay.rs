@@ -525,7 +525,7 @@ impl OverlayView {
         objc2_app_kit::NSBezierPath::bezierPathWithRect(coordinates::inset_rect(hole, -1.0, -1.0)).fill();
         objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
 
-        theme::paper_blue().setStroke();
+        theme::accent().setStroke();
         let ring = objc2_app_kit::NSBezierPath::bezierPathWithRect(coordinates::inset_rect(hole, -1.0, -1.0));
         ring.setLineWidth(2.0);
         ring.stroke();
@@ -537,12 +537,12 @@ impl OverlayView {
                     CGPoint::new(h.x - s / 2.0, h.y - s / 2.0),
                     CGSize::new(s, s),
                 );
-                theme::paper().setFill();
+                theme::surface().setFill();
                 objc2_app_kit::NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
                     sq, 1.5, 1.5,
                 )
                 .fill();
-                theme::ink().colorWithAlphaComponent(0.7).setStroke();
+                theme::label().colorWithAlphaComponent(0.7).setStroke();
                 let o = objc2_app_kit::NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
                     coordinates::inset_rect(sq, -0.5, -0.5),
                     2.0,
@@ -568,7 +568,7 @@ impl OverlayView {
             (rect.size.height * s).round() as i64
         );
         let font = theme::serif(13.0, false);
-        let text_color = theme::on_brown();
+        let text_color = theme::label();
         let attrs = crate::shelf::card::attrs(&font, &text_color, None);
         let text_ns = NSString::from_str(&text);
         let size = unsafe { text_ns.sizeWithAttributes(Some(&attrs)) };
@@ -615,7 +615,7 @@ fn desk_divider(height: f64) -> Retained<NSView> {
     let v = NSView::new(mtm);
     v.setWantsLayer(true);
     if let Some(layer) = v.layer() {
-        let c = theme::on_brown().colorWithAlphaComponent(0.25).CGColor();
+        let c = theme::label().colorWithAlphaComponent(0.25).CGColor();
         unsafe {
             let _: () = msg_send![&*layer, setBackgroundColor: &*c];
         }
@@ -624,9 +624,14 @@ fn desk_divider(height: f64) -> Retained<NSView> {
     v
 }
 
-/// `Theme.paperButton` (M3 slice: fixed 34pt height, width = title + 40,
-/// min 88).
-fn paper_button(
+/// A chrome button for the capture bars: fixed 34pt height, width =
+/// title + 40, min 88. `primary` fills with the accent and writes on it in
+/// `alternateSelectedControlTextColor`; the other variant is an outline in
+/// `separatorColor` with normal label text. The accent is the user's own
+/// system accent, so the fill and that text colour stay legible together
+/// in either appearance — which the old "accent fill + label text" pairing
+/// did not.
+fn chrome_button(
     title: &str,
     primary: bool,
     on_ground: bool,
@@ -643,60 +648,59 @@ fn paper_button(
         )
     };
     b.setBordered(false);
+    let font = theme::semibold(14.0);
     let color = if primary {
-        theme::ink()
-    } else if on_ground {
-        theme::on_brown()
+        objc2_app_kit::NSColor::alternateSelectedControlTextColor()
     } else {
-        theme::ink()
+        theme::label()
     };
-    b.setAttributedTitle(&attr_title(title, &theme::serif(14.0, true), &color));
+    b.setAttributedTitle(&attr_title(title, &font, &color));
     b.setWantsLayer(true);
     if let Some(layer) = b.layer() {
         unsafe {
             let _: () = msg_send![&*layer, setCornerRadius: 17.0f64];
             if primary {
-                let c = theme::paper_blue().CGColor();
+                let c = theme::accent().CGColor();
                 let _: () = msg_send![&*layer, setBackgroundColor: &*c];
                 let _: () = msg_send![&*layer, setBorderWidth: 0.0f64];
             } else {
                 let c = if on_ground {
-                    theme::on_brown().colorWithAlphaComponent(0.45).CGColor()
+                    objc2_app_kit::NSColor::separatorColor().CGColor()
                 } else {
-                    theme::ink().colorWithAlphaComponent(0.55).CGColor()
+                    objc2_app_kit::NSColor::separatorColor().CGColor()
                 };
                 let _: () = msg_send![&*layer, setBorderWidth: 1.0f64];
                 let _: () = msg_send![&*layer, setBorderColor: &*c];
             }
         }
     }
-    let w = paper_button_width(title);
+    let w = chrome_button_width(title);
     b.setFrameSize(CGSize::new(w, 34.0));
     b
 }
 
-/// max(88, measured title width (serif 14 bold) + 40).
-/// Public for other windows that need the same chrome buttons (OCR panel).
-pub fn paper_button_export(
+/// Chrome button, public for other windows that need the same look
+/// (the OCR panel, the recording bar).
+pub fn chrome_button_export(
     title: &str,
     primary: bool,
     on_ground: bool,
     target: Option<&AnyObject>,
     action: objc2::runtime::Sel,
 ) -> Retained<objc2_app_kit::NSButton> {
-    paper_button(title, primary, on_ground, target, action)
+    chrome_button(title, primary, on_ground, target, action)
 }
 
-fn paper_button_width(title: &str) -> f64 {
-    let font = theme::serif(14.0, true);
-    let dict = crate::shelf::card::attrs(&font, &theme::ink(), None);
+fn chrome_button_width(title: &str) -> f64 {
+    let font = theme::semibold(14.0);
+    let dict = crate::shelf::card::attrs(&font, &theme::label(), None);
     let size = unsafe { NSString::from_str(title).sizeWithAttributes(Some(&dict)) };
     88.0f64.max((size.width + 40.0).ceil())
 }
 
 /// One line's width in a given font (TopBar fixed-geometry measuring).
 fn text_width(s: &str, font: &objc2_app_kit::NSFont) -> f64 {
-    let dict = crate::shelf::card::attrs(font, &theme::ink(), None);
+    let dict = crate::shelf::card::attrs(font, &theme::label(), None);
     unsafe { NSString::from_str(s).sizeWithAttributes(Some(&dict)) }.width
 }
 
@@ -857,7 +861,7 @@ impl TopBar {
         let mtm = MainThreadMarker::new().expect("main thread");
         let this = mtm.alloc::<TopBar>().set_ivars(TopBarIvars::default());
         let bar: Retained<TopBar> = unsafe { msg_send![super(this), init] };
-        theme::paper_sheet(&bar, 6.0);
+        theme::card_layer(&bar, 6.0);
 
         let font_name = theme::brand_font(19.0);
         let name_w = text_width(crate::app::brand::BRAND, &font_name).ceil();
@@ -880,7 +884,7 @@ impl TopBar {
         }
         let name = make_label(&l_nonl8(crate::app::brand::BRAND));
         name.setFont(Some(&font_name));
-        name.setTextColor(Some(&theme::on_brown()));
+        name.setTextColor(Some(&theme::label()));
         let name_h = crate::shelf::card::line_height(&font_name);
         name.setFrame(CGRect::new(
             CGPoint::new(18.0 + 30.0 + 9.0, (h - name_h) / 2.0 - 1.0),
@@ -892,7 +896,7 @@ impl TopBar {
         let seg = NSView::new(mtm);
         seg.setWantsLayer(true);
         if let Some(layer) = seg.layer() {
-            let border = theme::on_brown().colorWithAlphaComponent(0.35).CGColor();
+            let border = theme::label().colorWithAlphaComponent(0.35).CGColor();
             unsafe {
                 let _: () = msg_send![&*layer, setBorderWidth: 1.0f64];
                 let _: () = msg_send![&*layer, setBorderColor: &*border];
@@ -966,7 +970,7 @@ impl TopBar {
             if let Some(layer) = b.layer() {
                 unsafe {
                     if on {
-                        let c = theme::paper_blue().CGColor();
+                        let c = theme::accent().CGColor();
                         let _: () = msg_send![&*layer, setBackgroundColor: &*c];
                     } else {
                         let none: Option<&objc2_core_graphics::CGColor> = None;
@@ -974,11 +978,11 @@ impl TopBar {
                     }
                 }
             }
-            let tint = if on { theme::ink() } else { theme::on_brown() };
+            let tint = if on { theme::label() } else { theme::label() };
             b.setContentTintColor(Some(&tint));
             let title = b.title().to_string();
             let trimmed = title.trim().to_string();
-            let title_color = if on { theme::ink() } else { theme::on_brown() };
+            let title_color = if on { theme::label() } else { theme::label() };
             b.setAttributedTitle(&attr_title(
                 &format!(" {trimmed}"),
                 &theme::serif(14.0, on),
@@ -1051,7 +1055,7 @@ fn symbol_button(
         objc2_app_kit::NSButton::buttonWithImage_target_action(&img, target, Some(action), mtm)
     };
     b.setBordered(false);
-    b.setContentTintColor(Some(&theme::on_brown()));
+    b.setContentTintColor(Some(&theme::label()));
     b
 }
 
@@ -1136,14 +1140,14 @@ impl RecordReadyBar {
         let h = 56.0;
         let hint_text = l("拖动边框调整录制范围");
         let hint_w = text_width(&hint_text, &theme::serif(13.0, false)).ceil() + 2.0;
-        let cancel_w = paper_button_width(&l("取消"));
-        let start_w = paper_button_width(&l("开始录制 ⏎"));
+        let cancel_w = chrome_button_width(&l("取消"));
+        let start_w = chrome_button_width(&l("开始录制 ⏎"));
         let total_w = 16.0 + hint_w + 12.0 + 1.0 + 12.0 + cancel_w + 12.0 + start_w + 10.0;
         bar.setFrame(CGRect::new(CGPoint::ZERO, CGSize::new(total_w.ceil(), h)));
 
         let hint = make_label(&hint_text);
         hint.setFont(Some(&theme::serif(13.0, false)));
-        hint.setTextColor(Some(&theme::on_brown_muted()));
+        hint.setTextColor(Some(&theme::label_tertiary()));
         let hint_h = crate::shelf::card::line_height(&theme::serif(13.0, false));
         hint.setFrame(CGRect::new(
             CGPoint::new(16.0, (h - hint_h) / 2.0 - 1.0),
@@ -1159,11 +1163,11 @@ impl RecordReadyBar {
         let bar_obj: &AnyObject = unsafe { &*(&*bar as *const RecordReadyBar as *const AnyObject) };
         let target = Some(bar_obj);
 
-        let cancel = paper_button(&l("取消"), false, true, target, sel!(cancelTapped:));
+        let cancel = chrome_button(&l("取消"), false, true, target, sel!(cancelTapped:));
         cancel.setFrameOrigin(CGPoint::new(16.0 + hint_w + 12.0 + 1.0 + 12.0, (h - 34.0) / 2.0));
         bar.addSubview(&cancel);
 
-        let start = paper_button(&l("开始录制 ⏎"), true, true, target, sel!(startTapped:));
+        let start = chrome_button(&l("开始录制 ⏎"), true, true, target, sel!(startTapped:));
         start.setFrameOrigin(CGPoint::new(
             16.0 + hint_w + 12.0 + 1.0 + 12.0 + cancel_w + 12.0,
             (h - 34.0) / 2.0,

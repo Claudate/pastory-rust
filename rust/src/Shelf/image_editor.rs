@@ -237,7 +237,7 @@ impl ImageEditorWindow {
         this.setAppearance(Some(&objc2_app_kit::NSAppearance::appearanceNamed(
             unsafe { objc2_app_kit::NSAppearanceNameDarkAqua },
         ).expect("dark aqua")));
-        this.setBackgroundColor(Some(&theme::brown()));
+        this.setBackgroundColor(Some(&theme::ground()));
         unsafe { this.setReleasedWhenClosed(false) };
 
         let content = crate::annotate::ocr_panel::ground_view_export(rect);
@@ -319,7 +319,7 @@ impl CanvasMatView {
         if let Some(layer) = v.layer() {
             unsafe {
                 let _: () = msg_send![&*layer, setCornerRadius: 2.0];
-                let _: () = msg_send![&*layer, setBackgroundColor: &*theme::paper().CGColor()];
+                let _: () = msg_send![&*layer, setBackgroundColor: &*theme::surface().CGColor()];
             }
         }
         let shadow = objc2_app_kit::NSShadow::new();

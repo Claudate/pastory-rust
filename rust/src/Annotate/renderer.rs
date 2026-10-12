@@ -366,12 +366,12 @@ pub fn draw_selection(a: &Annotation, ctx: &CGContext) {
         CGContext::add_path(Some(ctx), Some(&path));
         CGContext::set_stroke_color_with_color(
             Some(ctx),
-            Some(&theme::ink().colorWithAlphaComponent(0.45).CGColor()),
+            Some(&theme::label().colorWithAlphaComponent(0.45).CGColor()),
         );
         CGContext::set_line_width(Some(ctx), 1.5);
         CGContext::stroke_path(Some(ctx));
         CGContext::add_path(Some(ctx), Some(&path));
-        CGContext::set_stroke_color_with_color(Some(ctx), Some(&theme::paper().CGColor()));
+        CGContext::set_stroke_color_with_color(Some(ctx), Some(&theme::surface().CGColor()));
         CGContext::set_line_width(Some(ctx), 1.5);
         let lengths: [objc2_core_foundation::CGFloat; 2] = [5.0, 4.0];
         unsafe { CGContext::set_line_dash(Some(ctx), 0.0, lengths.as_ptr(), lengths.len()) };
@@ -381,10 +381,10 @@ pub fn draw_selection(a: &Annotation, ctx: &CGContext) {
     // Grips: none on text (its edges and corners drag, and the pointer says
     // so). Shapes and lines get small dots.
     if a.tool != AnnotateTool::Text {
-        CGContext::set_fill_color_with_color(Some(ctx), Some(&theme::paper().CGColor()));
+        CGContext::set_fill_color_with_color(Some(ctx), Some(&theme::surface().CGColor()));
         CGContext::set_stroke_color_with_color(
             Some(ctx),
-            Some(&theme::ink().colorWithAlphaComponent(0.6).CGColor()),
+            Some(&theme::label().colorWithAlphaComponent(0.6).CGColor()),
         );
         CGContext::set_line_width(Some(ctx), 1.0);
         let g = 3.0;
@@ -407,11 +407,11 @@ pub fn draw_selection(a: &Annotation, ctx: &CGContext) {
     );
     CGContext::set_fill_color_with_color(
         Some(ctx),
-        Some(&theme::ink().colorWithAlphaComponent(0.85).CGColor()),
+        Some(&theme::label().colorWithAlphaComponent(0.85).CGColor()),
     );
     CGContext::fill_ellipse_in_rect(Some(ctx), chip);
     CGContext::restore_g_state(Some(ctx));
-    CGContext::set_stroke_color_with_color(Some(ctx), Some(&theme::paper().CGColor()));
+    CGContext::set_stroke_color_with_color(Some(ctx), Some(&theme::surface().CGColor()));
     CGContext::set_line_width(Some(ctx), 1.4);
     CGContext::set_line_cap(Some(ctx), CGLineCap::Round);
     let k = 2.6;

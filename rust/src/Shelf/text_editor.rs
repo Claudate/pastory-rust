@@ -90,7 +90,7 @@ define_class!(
 
 fn title_attributes() -> Retained<objc2_foundation::NSDictionary<NSAttributedStringKey, AnyObject>> {
     let font = theme::script(22.0);
-    let color = theme::ink();
+    let color = theme::label();
     let ps = objc2_app_kit::NSMutableParagraphStyle::new();
     ps.setMinimumLineHeight(30.0);
     ps.setMaximumLineHeight(30.0);
@@ -223,7 +223,7 @@ impl TextEditorWindow {
         this.setAppearance(Some(&objc2_app_kit::NSAppearance::appearanceNamed(
             unsafe { objc2_app_kit::NSAppearanceNameDarkAqua },
         ).expect("dark aqua")));
-        this.setBackgroundColor(Some(&theme::brown()));
+        this.setBackgroundColor(Some(&theme::ground()));
         this.setMinSize(CGSize::new(420.0, 300.0));
         unsafe { this.setReleasedWhenClosed(false) };
 
@@ -255,7 +255,7 @@ impl TextEditorWindow {
         }
         title_field.setDrawsBackground(false);
         title_field.setFocusRingType(objc2_app_kit::NSFocusRingType(0));
-        title_field.setInsertionPointColor(Some(&theme::ink()));
+        title_field.setInsertionPointColor(Some(&theme::label()));
         title_field.setTextContainerInset(CGSize::new(0.0, 3.0));
         if let Some(container) = unsafe { title_field.textContainer() } {
             container.setLineFragmentPadding(0.0);
@@ -277,9 +277,9 @@ impl TextEditorWindow {
         let scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), scroll_rect);
         scroll.setHasVerticalScroller(true);
         scroll.setDrawsBackground(true);
-        scroll.setBackgroundColor(&theme::paper());
+        scroll.setBackgroundColor(&theme::surface());
         scroll.setBorderType(objc2_app_kit::NSBorderType::NoBorder);
-        theme::paper_sheet(&scroll, 4.0);
+        theme::card_layer(&scroll, 4.0);
         let text = crate::clipboard::store::read(|s| {
             s.items.iter().find(|it| it.id == item.id).map(|it| s.text(it).unwrap_or_default())
         }).unwrap_or_default();
@@ -287,16 +287,16 @@ impl TextEditorWindow {
         tv.setString(&NSString::from_str(&text));
         tv.setRichText(false);
         tv.setFont(Some(&theme::serif(16.0, false)));
-        tv.setTextColor(Some(&theme::ink()));
-        tv.setInsertionPointColor(Some(&theme::ink()));
-        tv.setBackgroundColor(&theme::paper());
+        tv.setTextColor(Some(&theme::label()));
+        tv.setInsertionPointColor(Some(&theme::label()));
+        tv.setBackgroundColor(&theme::surface());
         tv.setTextContainerInset(CGSize::new(18.0, 16.0));
         let para = objc2_app_kit::NSMutableParagraphStyle::new();
         para.setLineSpacing(7.0);
         para.setParagraphSpacing(4.0);
         tv.setDefaultParagraphStyle(Some(&para));
         let font = theme::serif(16.0, false);
-        let color = theme::ink();
+        let color = theme::label();
         unsafe {
             // SAFETY: typing attributes with the live font/color/paragraph.
             let attrs = title_like_attributes(&font, &color, &para);
@@ -304,7 +304,7 @@ impl TextEditorWindow {
         }
         if let Some(store) = unsafe { tv.textStorage() } {
             let range = objc2_foundation::NSRange { location: 0, length: store.string().length() };
-            let color = theme::ink();
+            let color = theme::label();
             let add_attrs = title_like_attributes(&font, &color, &para);
             unsafe { store.addAttributes_range(&add_attrs, range) };
         }
@@ -328,15 +328,15 @@ impl TextEditorWindow {
         // Footer: count + buttons.
         let count = NSTextField::labelWithString(&NSString::from_str(""), mtm);
         count.setFont(Some(&theme::serif(13.0, false)));
-        count.setTextColor(Some(&theme::on_brown_muted()));
+        count.setTextColor(Some(&theme::label_tertiary()));
         place_simple(&*count, 20.0, 14.0, 220.0, 36.0);
         content.addSubview(&count);
         *this.ivars().count.borrow_mut() = Some(count);
         let editor_obj: Option<&AnyObject> = unsafe { Some(&*(&*this as *const TextEditorWindow as *const AnyObject)) };
-        let cancel = crate::capture::selection_overlay::paper_button_export(
+        let cancel = crate::capture::selection_overlay::chrome_button_export(
             &l("取消"), false, true, editor_obj, sel!(cancelTapped:),
         );
-        let save = crate::capture::selection_overlay::paper_button_export(
+        let save = crate::capture::selection_overlay::chrome_button_export(
             &l("保存并复制"), true, true, editor_obj, sel!(saveTapped:),
         );
         save.setToolTip(Some(&NSString::from_str("⌘⏎")));
@@ -436,7 +436,7 @@ define_class!(
                 4.0,
                 4.0,
             );
-            theme::draw_paper(&paths, &theme::paper());
+            theme::draw_surface(&paths, &theme::surface());
         }
     }
 );
@@ -446,7 +446,7 @@ impl TitleSheetView {
         let mtm = MainThreadMarker::new().expect("main thread");
         let this = mtm.alloc::<TitleSheetView>().set_ivars(TitleSheetIvars {});
         let v: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame] };
-        theme::paper_sheet(&v, 4.0);
+        theme::card_layer(&v, 4.0);
         v
     }
 }

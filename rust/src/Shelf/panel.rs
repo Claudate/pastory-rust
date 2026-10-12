@@ -46,6 +46,9 @@ pub struct ShelfPanelController {
     outside_monitor: RefCell<Option<usize>>,
     watching_switches: Cell<bool>,
     poll_timer: RefCell<Option<usize>>,
+    /// The live panel carries the material; a snapshot cannot composite one.
+    /// See `build_view` in `shelf::view` where it is read.
+    material: Cell<bool>,
 }
 
 static CONTROLLER: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -63,6 +66,7 @@ pub fn controller() -> &'static ShelfPanelController {
             outside_monitor: RefCell::new(None),
             watching_switches: Cell::new(false),
             poll_timer: RefCell::new(None),
+            material: Cell::new(false),
         };
         Box::into_raw(Box::new(c)) as usize
     });
@@ -96,6 +100,17 @@ fn ensure_panel() -> Retained<ShelfPanel> {
     let p = make_panel(mtm);
     *c.panel.borrow_mut() = Some(p.clone());
     p
+}
+
+/// Whether a view tree built now should carry the panel material. True for
+/// the live panel, false while a render self-test snapshots offscreen.
+pub(crate) fn is_material_enabled() -> bool {
+    controller().material.get()
+}
+
+/// The live panel's content view, for self-test diagnostics.
+pub(crate) fn content_view() -> Option<Retained<NSView>> {
+    controller().panel.borrow().as_ref().and_then(|p| p.contentView())
 }
 
 /// `makePanel` — borderless, non-activating, status-bar level, clear.
@@ -144,6 +159,8 @@ pub fn prewarm() {
     let mtm = MainThreadMarker::new().expect("main thread");
     let p = ensure_panel();
     p.setFrame_display(CGRect::new(CGPoint::ZERO, CGSize::new(1200.0, 480.0)), false);
+    controller().material.set(true);
+    crate::app::theme::set_panel_material_alpha(1.0);
     let root = attach(mtm, CGSize::new(1200.0, 480.0));
     root.layoutSubtreeIfNeeded();
     with_model_mut(|m| m.prewarm_search());
@@ -285,6 +302,8 @@ pub fn show() {
     with_model_mut(|m| m.reset());
     // The window itself never leaves this screen; the slide happens to the
     // content inside the window, together with a fade.
+    controller().material.set(true);
+    crate::app::theme::set_panel_material_alpha(1.0);
     let root = attach(mtm, target.size);
     p.setFrame_display(target, false);
     p.setAlphaValue(0.0);

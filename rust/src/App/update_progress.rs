@@ -46,14 +46,14 @@ define_class!(
         fn t_draw_rect(&self, _dirty: objc2_core_foundation::CGRect) {
             let bounds = self.bounds();
             let r = bounds.size.height / 2.0;
-            theme::on_brown().colorWithAlphaComponent(0.18).setFill();
+            theme::label().colorWithAlphaComponent(0.18).setFill();
             objc2_app_kit::NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(bounds, r, r).fill();
             let fraction = self.ivars().fraction.get();
             if fraction <= 0.0 {
                 return;
             }
             let w = bounds.size.height.max(bounds.size.width * fraction.clamp(0.0, 1.0));
-            theme::paper_blue().setFill();
+            theme::accent().setFill();
             objc2_app_kit::NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
                 objc2_core_foundation::CGRect::new(
                     bounds.min(),
@@ -114,7 +114,7 @@ fn label(s: &str, bold: bool, on_brown: bool) -> Retained<objc2_app_kit::NSTextF
     let mtm = MainThreadMarker::new().expect("main thread");
     let f = objc2_app_kit::NSTextField::labelWithString(&NSString::from_str(s), mtm);
     f.setFont(Some(&theme::serif(if bold { 16.0 } else { 13.0 }, bold)));
-    let color = if on_brown { theme::on_brown() } else { theme::on_brown_muted() };
+    let color = if on_brown { theme::label() } else { theme::label_tertiary() };
     f.setTextColor(Some(&color));
     f
 }
@@ -161,7 +161,7 @@ impl Window {
             );
             this.setAppearance(appearance.as_deref());
         }
-        this.setBackgroundColor(Some(&theme::brown()));
+        this.setBackgroundColor(Some(&theme::ground()));
         this.setLevel(3); // floating
         unsafe {
             this.setReleasedWhenClosed(false);
@@ -181,7 +181,7 @@ impl Window {
             });
             unsafe { msg_send![super(t), initWithFrame: rect] }
         };
-        let cancel = crate::capture::selection_overlay::paper_button_export(
+        let cancel = crate::capture::selection_overlay::chrome_button_export(
             &l("取消"),
             false,
             true,
