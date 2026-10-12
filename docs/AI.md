@@ -190,7 +190,7 @@ sqlite3 "$DB" "
 
 ### L1 MCP 草案
 
-进程：独立小服务，**只读**打开 `pastory.sqlite`（`SQLITE_OPEN_READONLY`），需要正文时读 `items/<id>.txt`，需要图时解码成 PNG 再给。不要链进 Pastory.app 的 MainActor。
+进程：独立小服务，**只读**打开 `pastory.sqlite`（`SQLITE_OPEN_READONLY`），需要正文时读 `items/<id>.txt`，需要图时解码成 PNG 再给。不要链进 Pastory-Rust.app 的 MainActor。
 
 建议的 tools（名称稳定，宁可少）：
 

@@ -15,7 +15,7 @@ use objc2_foundation::{NSString, NSURL};
 use crate::app::localization::l;
 use crate::app::theme;
 
-pub const REPO_URL: &str = "https://github.com/nothingbutcici/pastory";
+pub const REPO_URL: &str = "https://github.com/Claudate/pastory-rust";
 pub const X_URL: &str = "https://x.com/nothingbutcici";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -126,7 +126,7 @@ fn draw(view: &ContactView) {
     let mut x = cx;
     sheet(view, x, top, &l("反馈 bug & 提功能"), &l("Pastory 微信小小群，交个朋友"), SheetArt::Qr(theme::resource_named("WeChatGroup.png")));
     x += 246.0;
-    sheet(view, x, top, &l("GitHub 点个 Star 吧"), &l("开源产品，喜欢就请助力一下"), SheetArt::Link("nothingbutcici/pastory", Link::Repo));
+    sheet(view, x, top, &l("GitHub 点个 Star 吧"), &l("开源产品，喜欢就请助力一下"), SheetArt::Link("Claudate/pastory-rust", Link::Repo));
     x += 246.0;
     sheet(view, x, top, &l("关注我的 X"), &l("新版本和碎碎念都在这。"), SheetArt::Link("@nothingbutcici", Link::X));
     x += 246.0;

@@ -51,7 +51,7 @@ fn dev_resources() -> Option<PathBuf> {
 
 fn bundle_resources() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let bundle = exe.ancestors().nth(3)?; // …/Pastory.app/Contents/MacOS/Pastory
+    let bundle = exe.ancestors().nth(3)?; // …/Pastory-Rust.app/Contents/MacOS/Pastory-Rust
     if bundle.file_name()?.to_str()? == "Contents" {
         return Some(bundle.join("Resources"));
     }

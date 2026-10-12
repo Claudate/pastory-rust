@@ -76,7 +76,7 @@ pub(crate) fn seed_store_path() {
     if let Some(img) = render_sample() {
         if let Some(png) = screenshotter::png_data(&img) {
             store::with(|s| {
-                s.insert_image(&png, &Source::pastory(), Some("Pastory 是一个截图工具".into()));
+                s.insert_image(&png, &Source::pastory(), Some("Pastory Rust 是一个截图工具".into()));
             });
         }
     }
@@ -158,7 +158,7 @@ fn seed_poster() -> Option<CFRetained<CGImage>> {
     let font = objc2_app_kit::NSFont::systemFontOfSize(64.0);
     card::draw_text(
         CGRect::new(CGPoint::new(80.0, h as f64 - 240.0), CGSize::new(1120.0, 80.0)),
-        "Pastory 录屏 00:08",
+        "Pastory Rust 录屏 00:08",
         &font,
         &objc2_app_kit::NSColor::whiteColor(),
         None,
@@ -199,7 +199,7 @@ pub(crate) fn render_sample() -> Option<CFRetained<CGImage>> {
         objc2_app_kit::NSColor::whiteColor().setFill();
         objc2_app_kit::NSRectFill(CGRect::new(CGPoint::ZERO, CGSize::new(w as f64, h as f64)));
         let lines = [
-            "Pastory 是一个截图工具",
+            "Pastory Rust 是一个截图工具",
             "所有复制过的内容都留在剪贴板里",
             "Made in 2026 · 中英混排 OK",
         ];
@@ -260,7 +260,7 @@ pub fn render_shelf(out: &str, searching: bool) -> bool {
     if searching {
         panel::with_model_mut(|m| {
             m.show_welcome = false;
-            m.set_query("Pastory");
+            m.set_query("Pastory Rust");
         });
     }
     // Thumbnails decode in the background; give them a moment so the render

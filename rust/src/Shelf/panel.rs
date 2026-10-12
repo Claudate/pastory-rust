@@ -490,9 +490,7 @@ pub fn paste_into_previous_app() {
         permissions::request_accessibility();
         return;
     }
-    unsafe {
-        let _: () = msg_send![&*app, activate];
-    }
+    app.activateWithOptions(objc2_app_kit::NSApplicationActivationOptions::ActivateAllWindows);
     // The hide animation takes 0.18 s; give activation a moment, then confirm
     // the target is actually in front.
     attempt_paste(app, 0);
@@ -536,9 +534,7 @@ pub fn hand_back_focus() {
     }
     // Only a real resign should be swallowed.
     c.keep_open_on_resign.set(p.isKeyWindow());
-    unsafe {
-        let _: () = msg_send![&*app, activate];
-    }
+    app.activateWithOptions(objc2_app_kit::NSApplicationActivationOptions::ActivateAllWindows);
 }
 
 /// `pendingHandBack` generation check, then the hand-back (model-scheduled).

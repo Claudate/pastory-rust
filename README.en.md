@@ -2,7 +2,7 @@
   <img src="Resources/Logo.png" width="104" alt="Pastory">
 </p>
 
-<h1 align="center">Pastory</h1>
+<h1 align="center">Pastory Rust</h1>
 
 <p align="center">Pastory = Paste + History</p>
 
@@ -42,12 +42,12 @@ Click to copy. Double-click to paste directly into the app you were using.
 
 Requires macOS 15 or later. Runs on Intel and Apple silicon.
 
-1. Download the [latest release](../../releases/latest), unzip it, and drag `Pastory.app` into Applications.
+1. Download the [latest release](../../releases/latest), unzip it, and drag `Pastory-Rust.app` into Applications.
 2. Open it. A handwritten **P** appears in the menu bar, and the clipboard panel opens once on first launch. (Notarized by Apple.)
 
    <img src="docs/images/menubar-zh.png" alt="The P in the menu bar" width="313">
 
-3. The first time you take a screenshot, allow **Screen Recording** when prompted, then reopen Pastory.
+3. The first time you take a screenshot, allow **Screen Recording** when prompted, then reopen Pastory Rust.
 
 Shortcuts, cleanup schedule, screenshot storage format, and more can be changed in Settings.
 
@@ -81,7 +81,7 @@ Which shortcut to press was something I had to think about every single time.
 
 Both can annotate, but neither looks nice doing it. I care about how the font and the text box look while I annotate (I need my small joys).
 
-So Pastory brings all of that together.
+So Pastory Rust brings all of that together.
 
 <img src="docs/images/capture-annotations-en.jpg" alt="Annotate right after capturing" width="600">
 
@@ -139,19 +139,19 @@ Colors are captured in the display's own color space, so nothing shifts.
 
 We've all been there: you need one piece of information and end up digging through chat history to find it, again.
 
-With Pastory: copy it once and give it a title such as "Client A address" or "Company invoice details". Pin it. Next time, double-click and it's pasted.
+With Pastory Rust: copy it once and give it a title such as "Client A address" or "Company invoice details". Pin it. Next time, double-click and it's pasted.
 
 #### Prompts that work, links worth keeping
 
 The moment you copy it, it's in your clipboard — no more forcing yourself to save everything to a notes app. Next time you do a similar task, you don't have to remember which session you discussed it in or scroll through dozens of turns to find it.
 
-With Pastory: search a keyword and it's there whenever you need it.
+With Pastory Rust: search a keyword and it's there whenever you need it.
 
 #### A visual reference library
 
 When you vibe-code a product, visuals matter. I used to take screenshots of references frantically and save each one to a local folder — at least ten seconds per image.
 
-With Pastory: take a screenshot, and the images line up in the clipboard so you can compare them and pick the final one. Pin the ones you like, open them to annotate when needed, and save to your desktop when you want — always as a full-resolution PNG.
+With Pastory Rust: take a screenshot, and the images line up in the clipboard so you can compare them and pick the final one. Pin the ones you like, open them to annotate when needed, and save to your desktop when you want — always as a full-resolution PNG.
 
 <br>
 
@@ -168,10 +168,10 @@ With Pastory: take a screenshot, and the images line up in the clipboard so you 
 ```bash
 git clone https://github.com/nothingbutcici/pastory.git
 cd pastory
-./build.sh          # → build/Pastory.app
+./build.sh          # → build/Pastory-Rust.app
 ```
 
-Swift Package Manager, Apple frameworks only. Project conventions are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Single-crate Rust (hand-written AppKit via objc2); stable Rust + Command Line Tools is all it needs. Project conventions are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 <br>
 

@@ -24,7 +24,7 @@ use objc2_foundation::{
 use crate::app::localization::l;
 use crate::app::preferences::Preferences;
 
-pub const REPO: &str = "nothingbutcici/pastory";
+pub const REPO: &str = "Claudate/pastory-rust";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Release {
@@ -82,7 +82,7 @@ pub fn is_newer(a: &str, than_b: &str) -> bool {
 
 /// Release notes are Markdown with the Chinese half first and the English
 /// half after a `---` line. Pick the half for the UI language, drop the
-/// "Pastory x.y" title line the alert already carries, turn bold/headings/
+/// "Pastory Rust x.y" title line the alert already carries, turn bold/headings/
 /// list dashes into plain text and bullets, and cap the length.
 pub fn notes_for_display(raw: &str, version: &str, english: bool) -> String {
     let halves: Vec<&str> = raw.split("\n---\n").collect();
@@ -98,7 +98,7 @@ pub fn notes_for_display(raw: &str, version: &str, english: bool) -> String {
     let mut lines: Vec<String> = Vec::new();
     for line in text.split('\n') {
         let mut trimmed = line.trim().to_string();
-        if trimmed == format!("Pastory {version}") || trimmed == "---" {
+        if trimmed == format!("Pastory Rust {version}") || trimmed == "---" {
             continue;
         }
         trimmed = trimmed.replace("**", "");
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn notes_half_strip() {
-        let raw = "Pastory 1.2\n\n**新功能**\n- 一\n- 二\n\n---\n\nPastory 1.2\n\n**New**\n- one";
+        let raw = "Pastory Rust 1.2\n\n**新功能**\n- 一\n- 二\n\n---\n\nPastory Rust 1.2\n\n**New**\n- one";
         let zh = notes_for_display(raw, "1.2", false);
         assert_eq!(zh, "新功能\n•  一\n•  二");
         let en = notes_for_display("中文\n---\n**New**\n- one", "1.2", true);
@@ -327,7 +327,7 @@ pub fn check_with(interactive: bool, quiet: bool, done: impl FnOnce(Outcome) + S
                     if interactive && !quiet {
                         info(
                             &l("已经是最新版本"),
-                            &l("Pastory %@").replacen("%@", &current_version(), 1),
+                            &l("Pastory Rust %@").replacen("%@", &current_version(), 1),
                         );
                     }
                     done(Outcome::UpToDate);
@@ -372,7 +372,7 @@ pub fn fetch_latest(done: impl FnOnce(Result<Release, String>) + Send + 'static)
     unsafe {
         // SAFETY: NSString header values on the standard request interface.
         let accept = NSString::from_str("application/vnd.github+json");
-        let ua = NSString::from_str(&format!("Pastory/{}", current_version()));
+        let ua = NSString::from_str(&format!("Pastory-Rust/{}", current_version()));
         let k1 = NSString::from_str("Accept");
         let k2 = NSString::from_str("User-Agent");
         let _: () = msg_send![&*req, setValue: &*accept, forHTTPHeaderField: &*k1];
@@ -423,7 +423,7 @@ fn offer(r: Release) {
         let mtm = MainThreadMarker::new().expect("main thread");
         let alert = NSAlert::new(mtm);
         alert.setMessageText(&NSString::from_str(
-            &l("Pastory %@ 可以更新了（当前 %@）")
+            &l("Pastory Rust %@ 可以更新了（当前 %@）")
                 .replacen("%@", &r.version, 1)
                 .replacen("%@", &current_version(), 1),
         ));
@@ -633,10 +633,12 @@ fn verify_and_install(zip_file: &Path) -> Result<(), InstallError> {
         ],
     )
     .map_err(|_| InstallError::Archive)?;
-    let new_app = work.join("Pastory.app");
-    if !new_app.exists() {
-        return Err(InstallError::Archive);
-    }
+    let work_dir = std::fs::read_dir(&work).map_err(|_| InstallError::Archive)?;
+    let new_app = work_dir
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.extension().map(|e| e == "app").unwrap_or(false))
+        .ok_or(InstallError::Archive)?;
     let target = bundle_path();
     let Some(mine) = team_identifier(&target) else {
         return Err(InstallError::Signature);

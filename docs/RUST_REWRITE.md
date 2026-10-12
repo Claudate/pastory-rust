@@ -96,7 +96,7 @@ objc2 框架 crate 全部支持 `declare` 特性：缺哪个 selector / C 函数
 ### 3.4 工具链
 
 - Rust stable（edition 2021+），目标 `aarch64-apple-darwin` + `x86_64-apple-darwin`（`cargo build --target` + `lipo -create`，对应 build.sh 的 ARCHS 分支）。
-- 构建/分发/发布脚本改造：`build-rs.sh`（或改写 build.sh 调 cargo）→ 同样的 `build/Pastory.app` 组装 + codesign 逻辑；dist.sh / release.sh 的 notarytool、spctl、ditto 流程不变，只换二进制来源。
+- 构建/分发/发布脚本改造：`build-rs.sh`（或改写 build.sh 调 cargo）→ 同样的 `build/Pastory-Rust.app` 组装 + codesign 逻辑；dist.sh / release.sh 的 notarytool、spctl、ditto 流程不变，只换二进制来源。
 - Info.plist / entitlements / 图标 / 字体资源全部沿用 `Resources/`。
 
 ### 3.5 本文档第一版遗漏、复查后补上的点（2026-09-24 复查）
@@ -347,7 +347,7 @@ Rust main 对齐同一顺序：
 
 ### M0 ✔ 工程骨架 + 菜单栏壳
 
-交付：cargo 工程（§4 目录）、Info.plist/entitlements/资源沿用、`build-rs.sh` 产出可签名的 `build/Pastory.app`（Developer ID 自动探测逻辑同 build.sh）、菜单栏图标 + 菜单 + 退出、Sandbox 环境开关、`.l` 框架（空表）。
+交付：cargo 工程（§4 目录）、Info.plist/entitlements/资源沿用、`build-rs.sh` 产出可签名的 `build/Pastory-Rust.app`（Developer ID 自动探测逻辑同 build.sh）、菜单栏图标 + 菜单 + 退出、Sandbox 环境开关、`.l` 框架（空表）。
 验收：从 Finder 打开能看到菜单栏图标；`--selftest l10n` 通过；正常启动忽略 `PASTORY_STORE`。
 spike：CGEvent post(tap:)、objc2-app-kit 最小 NSPanel、字体注册 三件套在本里程碑打穿。
 完成记录（2026-09-25）：三 spike 全部真机打穿——`--selftest paste`（session-tap post，flags 在 2s 内回到 post 前值；本机 idle 态常见 Command 位常置，Swift 版同样如此，故判定用回 settle 而非绝对值）、`--selftest panel`（Borderless+NonactivatingPanel+CGShieldingWindowLevel）、`--selftest fonts`（CTFontManagerRegisterFontsForURL .process 注册 YsabeauOffice/Caveat）。`--selftest l10n` 通过（26 entries，无重复键）；正常启动忽略 `PASTORY_STORE`（自测 suite 域未创建）；菜单栏图标 + 菜单经 `open` 启动 + System Events 验证。cargo 产物经 build-rs.sh 打包签名（ad-hoc；Developer ID 自动探测逻辑同 build.sh）。已知机器态：本机 idle 时 combinedSessionState 常置 Command 位（0x20100000），Swift 版同样如此，paste 自测因此改为 delta 判定。
@@ -430,7 +430,7 @@ spike：CGEvent post(tap:)、objc2-app-kit 最小 NSPanel、字体注册 三件�
 **docs 同步（DEVELOPMENT.md「Rust 版差异点」段）**：§构建管线（build-rs.sh 换 swift build、dist/release.sh 只换二进制来源）、模块目录大写 + `#[path]` 显式挂载、`--selftest` 仍是运行时参数、`menu_icon()` `Retained::retain`（M6 工程要点①）、**NSAttributedString ranges 一律 `storage.string().length()` 不是 `text.len()`**（M4 annotate_view + M6 TextEditorWindow 都踩过）、`SMAppService` 的 ObjC selector `mainAppService` 不是 Swift rename + `ServiceManagement.framework` 懒加载、Importer LZFSE 选系统 Foundation `NSData.decompressedUsingAlgorithm` 不引第三方 lzfse crate、`objc2` 生成绑定的 CF 关联函数与 AppKit ObjC 大小写、`objc2-av-foundation` 要显式开 `objc2-core-media` / `objc2-core-video` feature、`Write` 大文件小步走（M6 工程要点⑤）。
 
 **替换决策（全验收绿 → freeze + 切换）**：Swift 版进入冻结归档，仓库切换到 Rust 构建管线——
-- `build.sh` → shim 委托 `build-rs.sh`（真机 re-run 通过：→ build/Pastory.app）。
+- `build.sh` → shim 委托 `build-rs.sh`（真机 re-run 通过：→ build/Pastory-Rust.app）。
 - `Sources/Pastory/` 保留作行为基准（M7 起不再改）；Swift `Localization.swift` 是 M7 对表基准。
 - `dist.sh` / `release.sh` 流程未变（universal 构建 + 公证 + 盖章），只换二进制来源从 SwiftPM 到 `cargo build --target` + `lipo -create`。
 - 现行 1.0.6 可发行档即由 Rust 构建（`build-rs.sh` release；`ad-hoc` 本机签或 Developer ID 都行；`spctl --assess` 由 release.sh 的公证流程担保）。

@@ -2,7 +2,7 @@
   <img src="Resources/Logo.png" width="104" alt="Pastory">
 </p>
 
-<h1 align="center">Pastory</h1>
+<h1 align="center">Pastory Rust</h1>
 
 <p align="center">Pastory = Paste + History</p>
 
@@ -47,12 +47,12 @@
 
 macOS 15 或更新，Intel 和 Apple 芯片都可以。
 
-1. 下载 [最新版 zip](../../releases/latest)，解压，把 `Pastory.app` 拖进「应用程序」。
+1. 下载 [最新版 zip](../../releases/latest)，解压，把 `Pastory-Rust.app` 拖进「应用程序」。
 2. 打开它。菜单栏右上角出现手写的 **P**，第一次会自动弹出剪贴板面板。（已过 Apple 公证，请放心“食用”）
 
    <img src="docs/images/menubar-zh.png" alt="菜单栏里的 P" width="313">
 
-3. 第一次截图时，按提示打开「屏幕录制」权限，然后重新打开 Pastory。
+3. 第一次截图时，按提示打开「屏幕录制」权限，然后重新打开 Pastory Rust。
 
 快捷键、自动清理时间、截图存储格式等均可在「设置」中根据偏好自定义。
 
@@ -86,7 +86,7 @@ macOS 15 或更新，Intel 和 Apple 芯片都可以。
 
 另外，两个产品虽然都有基础的标注能力，只是样式都不太「雅」。我很在意标注时字体、文本框好不好看（时刻需要为自己提供情绪价值）。
 
-所以 Pastory 把这些能力都合在一起了！
+所以 Pastory Rust 把这些能力都合在一起了！
 
 <img src="docs/images/capture-annotations.jpg" alt="截图之后，随时标注" width="600">
 
@@ -144,19 +144,19 @@ macOS 15 或更新，Intel 和 Apple 芯片都可以。
 
 相信大家都有过：需要某个信息时，每次都得来回翻聊天记录疯狂找的体验。
 
-使用 Pastory：文本复制一次，加个标题如「客户 A 地址」「公司开票信息」。Pin 起来，下次使用，双击就能贴过去。
+使用 Pastory Rust：文本复制一次，加个标题如「客户 A 地址」「公司开票信息」。Pin 起来，下次使用，双击就能贴过去。
 
 #### 好用的 Prompt、宝藏链接
 
 复制的那一刻它就在剪贴板里了，终于不用专门逼自己培养随时存到笔记软件的习惯啦！！下次做类似的任务，也不用再思考我在哪个 session 中聊过，翻几十轮对话挨个找。
 
-使用 Pastory：搜索关键词，想用随时都能找得到。
+使用 Pastory Rust：搜索关键词，想用随时都能找得到。
 
 #### 当视觉素材库用
 
 vibe coding 做产品，视觉也很重要。过去疯狂截图找参考，再一个个存在本地文件夹。单图耗时至少 10 秒。
 
-使用 Pastory：简单截图，剪贴板排成一排，方便你比较、再确定最终选中方案。喜欢的 Pin 住，要标注的时候再点开编辑。喜欢就下载保存到桌面，导出的永远是全分辨率 PNG。
+使用 Pastory Rust：简单截图，剪贴板排成一排，方便你比较、再确定最终选中方案。喜欢的 Pin 住，要标注的时候再点开编辑。喜欢就下载保存到桌面，导出的永远是全分辨率 PNG。
 
 <br>
 
@@ -173,10 +173,10 @@ vibe coding 做产品，视觉也很重要。过去疯狂截图找参考，再�
 ```bash
 git clone https://github.com/nothingbutcici/pastory.git
 cd pastory
-./build.sh          # → build/Pastory.app
+./build.sh          # → build/Pastory-Rust.app
 ```
 
-Swift Package Manager，只用 Apple 自带框架。项目约定见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+Rust 单 crate（objc2 手写 AppKit），Rust 工具链 stable + Command Line Tools 即可。项目约定见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 
 <br>
 

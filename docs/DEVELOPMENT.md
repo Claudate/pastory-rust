@@ -1,4 +1,4 @@
-# Pastory 开发约定
+# Pastory Rust 开发约定
 
 > 给贡献者和未来的自己看的规则本。面向用户的介绍在仓库根目录的 [README.md](../README.md)（中文）/ [README.en.md](../README.en.md)。
 
@@ -8,8 +8,8 @@ Pastory 是 macOS 15+ 的菜单栏工具：剪贴板历史面板 + 截图标注 
 
 ```
 Cargo.toml (rust/)         Rust 单 crate 二进制 pastory（objc2 生态 + rusqlite，链接系统 libsqlite3）
-build-rs.sh               cargo build → build/Pastory.app → codesign（有 Developer ID 用它，否则 ad-hoc）
-dist.sh / release.sh      未变（universal 构建 + 公证 + 盖章 → dist/Pastory-<版本>.zip；只换二进制来源）
+build-rs.sh               cargo build → build/Pastory-Rust.app → codesign（有 Developer ID 用它，否则 ad-hoc）
+dist.sh / release.sh      未变（universal 构建 + 公证 + 盖章 → dist/Pastory-Rust-<版本>.zip；只换二进制来源）
 Resources/                 Info.plist、entitlements（空）、AppIcon.icns、Logo / MenuIcon / Pushpin、Fonts/（Caveat、Ysabeau Office 及各自的 OFL）
 rust/src/
   App/                     入口、菜单栏、全局快捷键、权限、偏好、更新器、双语表、主题、自测
@@ -32,8 +32,8 @@ docs/                      本文件、RUST_REWRITE.md（Rust 重写记录）、
 ## 构建、分发、发布
 
 ```bash
-./build-rs.sh              # 本机架构，build/Pastory.app（cargo 单 crate；Rust 工具链 stable 即可）
-./dist.sh                  # arm64 + x86_64，签名、公证、盖章，dist/Pastory-<版本>.zip 和 首次打开.txt（只换二进制来源）
+./build-rs.sh              # 本机架构，build/Pastory-Rust.app（cargo 单 crate；Rust 工具链 stable 即可）
+./dist.sh                  # arm64 + x86_64，签名、公证、盖章，dist/Pastory-Rust-<版本>.zip 和 首次打开.txt（只换二进制来源）
 ./release.sh notes.md      # 先改 Resources/Info.plist 的 CFBundleShortVersionString 并提交，再跑
 ```
 
@@ -66,7 +66,7 @@ docs/                      本文件、RUST_REWRITE.md（Rust 重写记录）、
 ## 自测
 
 ```bash
-BIN="./build/Pastory.app/Contents/MacOS/Pastory"
+BIN="./build/Pastory-Rust.app/Contents/MacOS/Pastory-Rust"
 S=/tmp/pastory-test      # 任何会写库的自测都必须指到一个临时目录
 PASTORY_STORE=$S "$BIN" --selftest shelf <out.png>       # 离屏渲染剪贴板面板（含样例）
 PASTORY_STORE=$S "$BIN" --selftest shelfsearch <out.png> # 搜索等待态

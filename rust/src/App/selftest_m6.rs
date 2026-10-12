@@ -188,8 +188,8 @@ pub fn download(rest: &[String]) -> bool {
 /// `SelfTest.updater` — fixture parse + version compare + notes strip +
 /// the ad-hoc self-install guard (Swift's checks table).
 pub fn updater() -> bool {
-    let fixture = r#"{"tag_name":"v1.2","html_url":"https://github.com/nothingbutcici/pastory/releases/tag/v1.2","body":"- faster shelf\n- HEIC option",
-  "assets":[{"name":"Pastory-1.2.zip","browser_download_url":"https://github.com/nothingbutcici/pastory/releases/download/v1.2/Pastory-1.2.zip"}]}"#;
+    let fixture = r#"{"tag_name":"v1.2","html_url":"https://github.com/Claudate/pastory-rust/releases/tag/v1.2","body":"- faster shelf\n- HEIC option",
+  "assets":[{"name":"Pastory-Rust-1.2.zip","browser_download_url":"https://github.com/Claudate/pastory-rust/releases/download/v1.2/Pastory-Rust-1.2.zip"}]}"#;
     let r = crate::app::updater::parse_release(fixture.as_bytes()).ok();
     if let Some(rel) = &r {
         println!(
@@ -201,7 +201,7 @@ pub fn updater() -> bool {
     }
     let checks: Vec<(&str, bool)> = vec![
         ("parses tag/notes/asset", r.as_ref().map(|rel| {
-            rel.version == "1.2" && rel.zip_url.as_deref().and_then(|u| u.rsplit('/').next()) == Some("Pastory-1.2.zip") && rel.notes.contains("HEIC")
+            rel.version == "1.2" && rel.zip_url.as_deref().and_then(|u| u.rsplit('/').next()) == Some("Pastory-Rust-1.2.zip") && rel.notes.contains("HEIC")
         }).unwrap_or(false)),
         ("1.2 > 1.0", crate::app::updater::is_newer("1.2", "1.0")),
         ("1.0.1 > 1.0", crate::app::updater::is_newer("1.0.1", "1.0")),
@@ -209,7 +209,7 @@ pub fn updater() -> bool {
         ("1.10 > 1.9", crate::app::updater::is_newer("1.10", "1.9")),
         ("notes: zh half, no markdown", {
             let t = crate::app::updater::notes_for_display(
-                "Pastory 1.2\n\n**新功能**\n- 一\n- 二\n\n---\n\nPastory 1.2\n\n**New**\n- one",
+                "Pastory Rust 1.2\n\n**新功能**\n- 一\n- 二\n\n---\n\nPastory Rust 1.2\n\n**New**\n- one",
                 "1.2",
                 false,
             );

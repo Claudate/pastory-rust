@@ -38,16 +38,14 @@ else
     BIN="target/$CONFIG/pastory"
 fi
 
-# Dev builds can ship under a different folder / display name so the Rust
-# port and the shipped Pastory stay distinguishable side by side (bundle id
-# — and therefore TCC — is unchanged; the executable name keeps keying the
-# signature attribution).
-APP="../build/${APP_FOLDER:-Pastory}.app"
+# Bundle folder / display name, and the executable's file name. Rust is the
+# only live port now (Swift 版已冻结归档), so the app ships as
+# "Pastory-Rust.app" / executable "Pastory-Rust" / display name "Pastory Rust"
+# (bundle id — and therefore TCC — is unchanged).
+APP="../build/${APP_FOLDER:-Pastory-Rust}.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-# The bundle's executable keeps the Swift name (Finder, signatures,
-# Screen Recording attribution all key on it).
-cp "$BIN" "$APP/Contents/MacOS/Pastory"
+cp "$BIN" "$APP/Contents/MacOS/Pastory-Rust"
 cp "$REPO/Resources/Info.plist" "$APP/Contents/Info.plist"
 if [ -n "${APP_TITLE:-}" ]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_TITLE}" "$APP/Contents/Info.plist"
