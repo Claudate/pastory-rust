@@ -116,8 +116,9 @@
 - [ ] 验收：浏览器打 feed 域名见 JSON；断网/错域名时 app 自动落 GitHub；大陆网络实测 feed 可达（workers.dev 对照组预期不通，证明绑域名必要）。
 
 **P2 · R2 镜像细化（0.5 天，可与 P1 并）**
-- [ ] `/files/*` 流式代理 + `Cache-Control`；zip 大小与免费档余量核对记录进 PR。
-- [ ] （可选）`sha256` 快检进 `verify_and_install` 前置。
+- [x] `/files/*` 流式代理 + `Cache-Control`（zip 不可变 → `max-age=86400` + etag；feed JSON 走 `no-cache`）。
+- [x] `sha256` 快检进安装链前置：`Release.sha256`（feed 扩展键）→ 下载后 `verify_sha256` 比对，失败即 `InstallError::Checksum` 弃装；GitHub 兜底源无该键则跳过。仅作镜像完整性快检，信任闸仍是 codesign（`updater.rs`、`--selftest updater` 已加系统基准向量断言）。
+- [x] 体积核对（2026-10-12 实测 `du -sh build/PasteJar.app`）：`PasteJar.app` 6.8 MB，zip 与 app 同量级（≈7 MB）。按 8 MB 估：R2 免费 10 GB·月存储 ≈ 1280 个版本残留；R2 读免费 10M 次/月 → ≈80 TB 出口还装得下；KV 免费写 1000/天、发布每次 1 键，绰绰有余。无超档风险。
 
 **P3 · mas feature + 商店变体（1–2 天）**
 - [x] `rust/Cargo.toml` 加 `mas = []`；updater/offer/安装链按 §2 分叉（bundle_path/team_identifier/can_self_install/InstallError/install 链/update_progress 模块全 cfg）；feed 扩展键 `mas.store_url` → 商店版 offer「打开 App Store」。

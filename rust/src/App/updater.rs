@@ -47,6 +47,10 @@ pub struct Release {
     pub version: String,
     pub notes: String,
     pub zip_url: Option<String>,
+    /// `sha256` of the zip (feed extension key, docs/MAS_PLAN.md §1.1). The
+    /// self-hosted mirror publishes it; the GitHub fallback does not, so it is
+    /// None there and the quick-check simply does not run.
+    pub sha256: Option<String>,
     pub page: String,
     /// `mas.store_url` (feed extension key): App Store listing link once the
     /// store build ships; unused by the direct build's updater.
@@ -230,7 +234,7 @@ pub fn parse_release(data: &[u8]) -> Result<Release, String> {
         return Err("cannotParseResponse: no tag_name".into());
     };
     let version = tag.strip_prefix('v').unwrap_or(&tag).to_string();
-    let zip_url = { dict.objectForKey(ns_string!("assets")) }
+    let asset = { dict.objectForKey(ns_string!("assets")) }
         .map(|v| unsafe { Retained::cast_unchecked::<NSArray<NSDictionary<NSString, AnyObject>>>(v) })
         .into_iter()
         .flat_map(|v| v.iter().collect::<Vec<_>>())
@@ -247,10 +251,20 @@ pub fn parse_release(data: &[u8]) -> Result<Release, String> {
             let scheme = url.scheme().map(|s| s.to_string());
             let host = url.host().map(|s| s.to_string());
             match (scheme.as_deref(), host.as_deref()) {
-                (Some("https"), Some(h)) if zip_host_allowed(h) => Some(url_s),
+                (Some("https"), Some(h)) if zip_host_allowed(h) => {
+                    // The digest rides on the same asset entry as the url.
+                    let sha = { a.objectForKey(ns_string!("sha256")) }
+                        .map(|s| unsafe { Retained::cast_unchecked::<NSString>(s) }.to_string())
+                        .filter(|s| !s.trim().is_empty());
+                    Some((url_s, sha))
+                }
                 _ => None,
             }
         });
+    let (zip_url, sha256) = match asset {
+        Some((url, sha)) => (Some(url), sha),
+        None => (None, None),
+    };
     let page = { dict.objectForKey(ns_string!("html_url")) }
         .map(|u| unsafe { Retained::cast_unchecked::<NSString>(u) }.to_string())
         .unwrap_or_else(|| format!("https://github.com/{REPO}/releases/latest"));
@@ -265,6 +279,7 @@ pub fn parse_release(data: &[u8]) -> Result<Release, String> {
         version,
         notes,
         zip_url,
+        sha256,
         page,
         store_url,
     })
@@ -611,7 +626,7 @@ fn offer(r: Release) {
         if response == objc2_app_kit::NSAlertFirstButtonReturn {
             if can_install {
                 if let Some(zip) = r.zip_url.clone() {
-                    install(zip, r.version.clone(), r.page.clone());
+                    install(zip, r.version.clone(), r.page.clone(), r.sha256.clone());
                 }
             } else if let Some(url) = NSURL::URLWithString(&NSString::from_str(&r.page)) {
                 NSWorkspace::sharedWorkspace().openURL(&url);
@@ -665,6 +680,7 @@ pub fn describe_error(detail: &str, long: bool) -> String {
 #[cfg(not(feature = "mas"))]
 pub enum InstallError {
     Signature,
+    Checksum,
     Archive,
     Other(String),
     Cancelled,
@@ -672,7 +688,7 @@ pub enum InstallError {
 
 /// The download + verify + swap pipeline (`Updater.install`).
 #[cfg(not(feature = "mas"))]
-pub fn install(zip_url: String, version: String, page: String) {
+pub fn install(zip_url: String, version: String, page: String, sha256: Option<String>) {
     let Some(url) = NSURL::URLWithString(&NSString::from_str(&zip_url)) else { return };
     let window = crate::app::update_progress::Window::new(version.clone());
     window.show();
@@ -680,7 +696,7 @@ pub fn install(zip_url: String, version: String, page: String) {
     // twice over (window → worker dispatch + worker → main dispatch), then
     // drives the UI on the main thread (Swift's window.close() hops).
     let win_raw = window.raw_pub();
-    crate::app::update_progress::download(&url, window, move |result| move_to_worker(win_raw, result, version.clone(), page.clone()));
+    crate::app::update_progress::download(&url, window, move |result| move_to_worker(win_raw, result, version.clone(), page.clone(), sha256));
 }
 
 #[cfg(not(feature = "mas"))]
@@ -689,6 +705,7 @@ fn move_to_worker(
     result: Result<PathBuf, crate::app::update_progress::DownloadError>,
     version: String,
     page: String,
+    sha256: Option<String>,
 ) {
     // SAFETY: the panel is a process-lifetime object; the handle is rebuilt
     // locally for the UI calls below.
@@ -697,7 +714,7 @@ fn move_to_worker(
         Ok(zip_path) => {
             win.begin_installing();
             std::thread::spawn(move || {
-                let outcome = verify_and_install(&zip_path);
+                let outcome = verify_and_install(&zip_path, sha256.as_deref());
                 let zip_path_c = zip_path.clone();
                 crate::app::delegate::dispatch_main_async(Box::new(move || {
                     let win = unsafe { crate::app::update_progress::Window::from_raw_pub(win_raw) };
@@ -727,6 +744,7 @@ fn retry_or_open_page(version: String, page: String, e: InstallError) {
     alert.setMessageText(&NSString::from_str(&l("自动更新没有成功")));
     let detail = match &e {
         InstallError::Signature => l("下载的更新包没有通过签名校验，已放弃安装。"),
+        InstallError::Checksum => l("下载的更新包校验不通过（镜像可能不完整）。"),
         InstallError::Archive => l("下载的更新包不完整。"),
         InstallError::Other(s) => describe_error(s, true),
         InstallError::Cancelled => return,
@@ -753,11 +771,26 @@ fn check_quiet_reinstall(version: String) {
         if let Ok(release) = outcome {
             if release.version == version {
                 if let Some(zip) = release.zip_url.clone() {
-                    install(zip, release.version, release.page);
+                    install(zip, release.version.clone(), release.page.clone(), release.sha256.clone());
                 }
             }
         }
     });
+}
+
+/// Lower-case hex sha256 of a byte slice. Kept dependency-light so both build
+/// variants can self-test it; the digest is only ever compared, never trusted
+/// as an identity (codesign remains the gate).
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Does the file's sha256 match `expected` (hex, case-insensitive)? A missing
+/// or unreadable file answers false, so a failed quick-check never installs.
+pub fn verify_sha256(file: &std::path::Path, expected: &str) -> bool {
+    let Ok(bytes) = std::fs::read(file) else { return false };
+    sha256_hex(&bytes).eq_ignore_ascii_case(expected.trim())
 }
 
 /// After a successful swap: relaunch the app at the same bundle path.
@@ -783,7 +816,16 @@ fn relaunch() {
 
 /// Off the main thread: unzip, verify the chain, then `replaceItemAt`.
 #[cfg(not(feature = "mas"))]
-fn verify_and_install(zip_file: &Path) -> Result<(), InstallError> {
+fn verify_and_install(zip_file: &Path, sha256: Option<&str>) -> Result<(), InstallError> {
+    // Feed-published digest first (docs/MAS_PLAN.md §2 P2): it is a cheap
+    // mirror-integrity check, not a trust anchor — a truncated or swapped R2
+    // object is refused here, and the codesign chain below stays the gate.
+    if let Some(expected) = sha256 {
+        if !verify_sha256(zip_file, expected) {
+            return Err(InstallError::Checksum);
+        }
+    }
+
     let work = std::env::temp_dir().join(format!(
         "pastory-update-{}",
         objc2_foundation::NSUUID::new().UUIDString()

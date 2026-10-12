@@ -164,6 +164,7 @@ pub static PAIRS: &[(&str, &str)] = &[
     ("正在校验并安装…", "Verifying and installing…"),
     ("重试", "Retry"),
     ("下载的更新包没有通过签名校验，已放弃安装。", "The downloaded update failed signature verification and was not installed."),
+    ("下载的更新包校验不通过（镜像可能不完整）。", "The downloaded update failed its integrity check (the mirror may be incomplete)."),
     ("下载的更新包不完整。", "The downloaded update is incomplete."),
     ("连不上更新源（可能需要代理）", "Cannot reach the update source (a proxy may help)"),
     ("连不上更新源，更新包没有下载下来。\n\n打开代理再试一次，或者从下载页手动下载。", "Could not reach the update source, so the update was not downloaded.\n\nTurn on a proxy and try again, or download it manually from the release page."),

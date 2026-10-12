@@ -230,10 +230,26 @@ pub fn updater() -> bool {
             match crate::app::updater::parse_release(feed.as_bytes()) {
                 Ok(rel) => {
                     let host_is_feed = crate::app::updater::FEED_HOST == Some("feed.example.com");
-                    rel.version == "1.3" && rel.notes.contains("feed notes") && rel.zip_url.is_some() == host_is_feed
+                    rel.version == "1.3"
+                        && rel.notes.contains("feed notes")
+                        && rel.zip_url.is_some() == host_is_feed
+                        && rel.sha256.is_some() == host_is_feed
                 }
                 Err(_) => false,
             }
+        }),
+        ("sha256: digest matches the system reference", {
+            // Cross-checked against `shasum -a 256` for the same inputs, so a
+            // backend change in sha2 cannot silently alter the digest, and an
+            // unreadable file must never pass the quick-check.
+            crate::app::updater::sha256_hex(b"")
+                == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                && crate::app::updater::sha256_hex(b"pastejar")
+                    == "5fd29975e157bb8984b8f946eef5d1959dc08d294fe87d8f5286191cc4562a25"
+                && !crate::app::updater::verify_sha256(
+                    std::path::Path::new("/nonexistent-pastejar-selftest"),
+                    "e3b0c44",
+                )
         }),
     ];
     #[cfg(not(feature = "mas"))]
