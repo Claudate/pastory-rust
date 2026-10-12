@@ -201,6 +201,9 @@ pub fn updater() -> bool {
             rel.notes.len()
         );
     }
+    // `mut` is for the direct build only: the self-install guard below is
+    // appended under `not(mas)`.
+    #[cfg_attr(feature = "mas", allow(unused_mut))]
     let mut checks: Vec<(&str, bool)> = vec![
         ("parses tag/notes/asset", r.as_ref().map(|rel| {
             rel.version == "1.2" && rel.zip_url.as_deref().and_then(|u| u.rsplit('/').next()) == Some("PasteJar-1.2.zip") && rel.notes.contains("HEIC")

@@ -10,6 +10,7 @@
 //! `updater` self-test runs without network; the interactive flow hops back
 //! to the main queue like Swift's `@MainActor`.
 
+#[cfg(not(feature = "mas"))]
 use std::path::PathBuf;
 #[cfg(not(feature = "mas"))]
 use std::path::Path;
@@ -469,7 +470,7 @@ fn http_get(
     unsafe {
         // SAFETY: NSString header values on the standard request interface.
         let a = NSString::from_str(accept);
-        let ua = NSString::from_str(&format!("PasteJar/{}", current_version()));
+        let ua = NSString::from_str(&format!("{}/{}", crate::app::brand::BRAND, current_version()));
         let k1 = NSString::from_str("Accept");
         let k2 = NSString::from_str("User-Agent");
         let _: () = msg_send![&*req, setValue: &*a, forHTTPHeaderField: &*k1];
@@ -520,7 +521,7 @@ fn fetch_github_latest(done: impl FnOnce(Result<Release, String>) + Send + 'stat
     unsafe {
         // SAFETY: NSString header values on the standard request interface.
         let accept = NSString::from_str("application/vnd.github+json");
-        let ua = NSString::from_str(&format!("PasteJar/{}", current_version()));
+        let ua = NSString::from_str(&format!("{}/{}", crate::app::brand::BRAND, current_version()));
         let k1 = NSString::from_str("Accept");
         let k2 = NSString::from_str("User-Agent");
         let _: () = msg_send![&*req, setValue: &*accept, forHTTPHeaderField: &*k1];
