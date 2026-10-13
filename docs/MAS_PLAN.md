@@ -127,9 +127,10 @@
 - [ ] 验收补充：strings 级安装链缺席随 P3 commit 验证；feed 检查 + 按钮行为待 P1 部署后真机过。
 
 **P4 · 沙盒真机回归（1–2 天，风险表见 §3）**
-- [x] 导出目录记忆：改存 security-scoped bookmark（`App/preferences_export.rs`），创建与解析都先试带 scope、非沙盒进程以 `NSCocoaErrorDomain 256` 拒绝时退普通 bookmark——直发版行为不变，沙盒版跨启动可写。不可用的旧记忆退回 ~/Downloads 并忘掉。`--selftest exportdir` 3 项过。
-- [ ] 全局点击收起（`panel.rs::install_outside_monitor` 的 `addGlobalMonitorForEventsMatchingMask`）与锁屏通知（`monitor.rs`）在沙盒内是否成立——**待 pkg 真机**；不成立则降级为失焦关闭 + ⎋（已有 `windowDidResignKey` 路径）。
-- [ ] 双语 `--selftest shelf` 全面板目测（沙盒下渲染与非沙盒一致性）——待 pkg 真机。
+- [x] **沙盒冒烟（2026-10-13，复现：`./build-mas.sh` → `open build/PasteJar-mas.app`）**：`./build-mas.sh` 出 `build/PasteJar-mas.app`（本机有 Apple Distribution 签名身份，脚本自动签上）。`open` 启动 → 进程起、进容器 `~/Library/Containers/com.cici.snipclip/`，数据落到容器内 `Application Support/Pastory/`（自建 `pastory.sqlite` + 空 `items/`）；直发版 `~/Library/Application Support/Pastory/` 的 736 条历史**未被触碰**。印证 §3「数据目录不用改」。
+- [x] **沙盒二进制不能从 shell 执行**（实测，见 `build-mas.sh` 头部）：带 `app-sandbox` 的二进制作裸 exec 会在 dyld 初始化期被 `libsystem_secinit` 拒掉（`EXC_BREAKPOINT`/SIGTRAP，栈在 `_libsecinit_appsandbox`），**早于 `main`**，所以 `--selftest` 在沙盒变体里根本不可用。自测只能跑裸 `--features mas` 二进制（非沙盒进程，覆盖 mas 代码路径但覆盖不到沙盒运行时）；沙盒 app 本身要靠**看真实窗口**验，不是渲染自测。
+- [ ] 全局点击收起（`panel.rs::install_outside_monitor` 的 `addGlobalMonitorForEventsMatchingMask`）与锁屏通知（`monitor.rs`）在沙盒内是否成立——**要在 `open` 起的沙盒 app 里手工验**（shell 路径已排除）；不成立则降级为失焦关闭 + ⎋（`windowDidResignKey` 路径已存在）。
+- [ ] 双语渲染在「沙盒下与非沙盒一致」这一条作废（渲染自测进不了沙盒）；替代：裸 mas 二进制跑全套 `--selftest`，沙盒 app 目测面板观感。
 - [ ] 辅助功能授权流（合成 ⌘V 双击粘贴）+ 屏幕录制首启流在 pkg 安装形态下走通——MAS 的 TCC 条目随容器路径，重新验证一遍。
 
 **P5 · 换皮与提交（2026-10-12 启动；定位已拍板：现代 macOS 原生质感，两通道统一）**

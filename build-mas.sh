@@ -11,6 +11,16 @@
 # Without them the script still emits build/PasteJar-mas.app ad-hoc-signed
 # with the sandbox entitlements — local smoke testing only, Transporter will
 # reject it (that is expected, not a bug).
+#
+# Sandboxed binaries cannot be run from a shell (verified 2026-10-13): the
+# `app-sandbox` entitlement makes libsystem_secinit reject a direct exec of
+# Contents/MacOS/PasteJar, trapping in dyld before main — so `--selftest` is
+# NOT available in this variant. Launch it through launchd instead:
+#   open build/PasteJar-mas.app
+# The bare `--features mas` binary (cargo run / target/*/pastory) is a normal
+# unsandboxed process and still runs every self-test — that covers the `mas`
+# code paths, not the sandbox runtime. Verify the sandboxed app by looking at
+# the running window, not by rendering self-tests.
 set -euo pipefail
 cd "$(dirname "$0")/rust"
 
