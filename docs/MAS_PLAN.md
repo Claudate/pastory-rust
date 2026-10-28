@@ -11,7 +11,7 @@
 | 联网策略 | 更新检查保留，主源改为自建 Cloudflare feed，GitHub API 降级为兜底源；**商店版只读 feed、绝不下载 zip**（Guideline 2.5.2 禁止下载可执行代码，更新走 App Store 本身） | ✔ |
 | bundle id | 直发版永远 `com.cici.snipclip`（CLAUDE.md 硬规则）；商店版提交前必须换自有 id | 用户定：后期再换 |
 | 品牌 | 商店版定名 **PasteJar**（2026-10-12 拍板）；sweep 见 commit「brand: rename to PasteJar」 |
-| 联系面板 | X/微信/咖啡三格暂保留（按用户指示）；**提审前必须替换或经 mas cfg 移除** |
+| 联系面板 | 直发版四格：微信群 / 个人微信 / X / 咖啡（2026-10-22 换成用户新码与 @smithjacky521，并去掉开源地址一格）；**提审前必须替换或经 mas cfg 移除** |
 | 换皮分层 | L1 素材（图标/图钉/菜单符号）+ L2 色板与字体 + L3 形状语言。**2026-10-12 拍板：现代 macOS 原生质感，直发版与商店版共用一套新皮**（差异最大、审核最友好；品牌识别保留在 Logo、菜单栏图标与字标） | L2/L3 已落地 | 
 | 发布源仓库 | updater `REPO`、contact 面板 `REPO_URL`、`release.sh` 均还指向上游 `nothingbutcici/pastory`，而 CI/origin 已是 `Claudate/pastory-rust` —— 发布源已切 Claudate/pastory-rust（updater REPO、contact REPO_URL、release.sh，2026-10-12）；X/微信/咖啡链接随改名一并处置 | 完成 |
 
@@ -83,7 +83,7 @@
 
 ## 3. 沙盒 / 签名 / 构建管线
 
-- `Resources/Pastory-mas.entitlements`（新文件）：
+- `Resources/PasteJar.entitlements`（新文件）：
   ```xml
   com.apple.security.app-sandbox          = true
   com.apple.security.network.client       = true   <!-- 只读 feed -->
@@ -96,7 +96,7 @@
   - Carbon `RegisterEventHotKey`、SCStream/SCScreenshotManager、Vision OCR、`NSPasteboard.changeCount` 轮询、`NSSavePanel/NSOpenPanel` 导出导入（powerbox）、`SMAppService.mainApp` 登录项、合成 ⌘V（辅助功能已授时）——预期沙盒内成立。
   - `com.apple.screenIsLocked/Unlocked` 分布式通知（monitor.rs 锁屏跳过）——部分通知沙盒内受限，实测。
   - 记住的导出目录跨启动失效（沙盒路径权限不随绝对路径持久）——改存 security-scoped bookmark，或退回「每次重选」。
-- `build-mas.sh`（新）：`ARCHS="arm64 x86_64" cargo build --features mas` → 组装 bundle（同 build-rs.sh 清单）→ 嵌入 `embedded.provisionprofile`（App Distribution 证书 + MAS provisioning，Xcode/门户生成）→ `codesign --entitlements Pastory-mas.entitlements` → `productbuild` 出 pkg。不公证——上传 Transporter/App Store Connect 由苹果处理。
+- `build-mas.sh`（新）：`ARCHS="arm64 x86_64" cargo build --features mas` → 组装 bundle（同 build-rs.sh 清单）→ 嵌入 `embedded.provisionprofile`（App Distribution 证书 + MAS provisioning，Xcode/门户生成）→ `codesign --entitlements PasteJar.entitlements` → `productbuild` 出 pkg。不公证——上传 Transporter/App Store Connect 由苹果处理。
 - `.github/workflows/`：新增 `workflow_dispatch` 手动 job 走 build-mas.sh + pkg 上传产物；现有 tag 驱动的直发 job 不动。发布后追一步 `wrangler kv key put` / `wrangler r2 object put`（token 进 Actions secret `CLOUDFLARE_API_TOKEN`）。
 - **bundle id 换发时的连带**（后期执行，但 schema 已预留 `mas.store_url`）：新容器 = 历史/设置/TCC 全重来；迁移通道用现成的「导入」OpenPanel 选旧 `~/Library/Application Support/Pastory/`（powerbox 授权内复制可行），设置项与权限引导用户重点一遍——商店描述和首次启动引导要写清。
 
@@ -122,12 +122,12 @@
 
 **P3 · mas feature + 商店变体（1–2 天）**
 - [x] `rust/Cargo.toml` 加 `mas = []`；updater/offer/安装链按 §2 分叉（bundle_path/team_identifier/can_self_install/InstallError/install 链/update_progress 模块全 cfg）；feed 扩展键 `mas.store_url` → 商店版 offer「打开 App Store」。
-- [x] `Resources/Pastory-mas.entitlements`（app-sandbox + network.client + accessibility）+ `build-mas.sh`（bundle→provisioning→签名→productbuild；缺证书只出本地冒烟 .app）+ 手动 CI job（`release-mas.yml`，runner 无证书、产物 ad-hoc）。
+- [x] `Resources/PasteJar.entitlements`（app-sandbox + network.client + accessibility）+ `build-mas.sh`（bundle→provisioning→签名→productbuild；缺证书只出本地冒烟 .app）+ 手动 CI job（`release-mas.yml`，runner 无证书、产物 ad-hoc）。
 - [ ] pkg 冒烟（TestFlight）——**待 Apple Developer 账号证书 + provisioning profile + 自有 bundle id（后期轮）**。
 - [ ] 验收补充：strings 级安装链缺席随 P3 commit 验证；feed 检查 + 按钮行为待 P1 部署后真机过。
 
 **P4 · 沙盒真机回归（1–2 天，风险表见 §3）**
-- [x] **沙盒冒烟（2026-10-13，复现：`./build-mas.sh` → `open build/PasteJar-mas.app`）**：`./build-mas.sh` 出 `build/PasteJar-mas.app`（本机有 Apple Distribution 签名身份，脚本自动签上）。`open` 启动 → 进程起、进容器 `~/Library/Containers/com.cici.snipclip/`，数据落到容器内 `Application Support/Pastory/`（自建 `pastory.sqlite` + 空 `items/`）；直发版 `~/Library/Application Support/Pastory/` 的 736 条历史**未被触碰**。印证 §3「数据目录不用改」。
+- [x] **沙盒冒烟（2026-10-13，复现：`./build-mas.sh` → `open build/PasteJar.app`）**：`./build-mas.sh` 出 `build/PasteJar.app`（本机有 Apple Distribution 签名身份，脚本自动签上）。`open` 启动 → 进程起、进容器 `~/Library/Containers/com.cici.snipclip/`，数据落到容器内 `Application Support/Pastory/`（自建 `pastory.sqlite` + 空 `items/`）；直发版 `~/Library/Application Support/Pastory/` 的 736 条历史**未被触碰**。印证 §3「数据目录不用改」。
 - [x] **沙盒二进制不能从 shell 执行**（实测，见 `build-mas.sh` 头部）：带 `app-sandbox` 的二进制作裸 exec 会在 dyld 初始化期被 `libsystem_secinit` 拒掉（`EXC_BREAKPOINT`/SIGTRAP，栈在 `_libsecinit_appsandbox`），**早于 `main`**，所以 `--selftest` 在沙盒变体里根本不可用。自测只能跑裸 `--features mas` 二进制（非沙盒进程，覆盖 mas 代码路径但覆盖不到沙盒运行时）；沙盒 app 本身要靠**看真实窗口**验，不是渲染自测。
 - [ ] 全局点击收起（`panel.rs::install_outside_monitor` 的 `addGlobalMonitorForEventsMatchingMask`）与锁屏通知（`monitor.rs`）在沙盒内是否成立——**要在 `open` 起的沙盒 app 里手工验**（shell 路径已排除）；不成立则降级为失焦关闭 + ⎋（`windowDidResignKey` 路径已存在）。
 - [ ] 双语渲染在「沙盒下与非沙盒一致」这一条作废（渲染自测进不了沙盒）；替代：裸 mas 二进制跑全套 `--selftest`，沙盒 app 目测面板观感。
@@ -141,8 +141,35 @@
 - [x] 实时窗口的材质合成与圆角裁剪已像素级复核（`--selftest liveshot` + 外部 `screencapture`）：面板左上圆角半径 ≈12px（= `RADIUS_PANEL`）、材质透光由红/蓝背板对照证实。**仍差一步且只有用户能做**：提审前从 Finder 打开 `build/PasteJar.app`，浅色 + 深色各目测一次实时观感（「顺不顺眼」机器判不了）。
 - [ ] L1 素材六件重制（MenuIcon 保持 template 剪影）；等用户的品牌稿。
 - [x] 联系面板商店版裁掉微信/咖啡二维码（`mas` cfg，`contact_pane.rs::draw_sheets`）；商店版只剩自有 GitHub 一格。strings gate 验证：mas 二进制无 `nothingbutcici` / `WeChatGroup.png` / `Coffee.png` / 「Buy me a coffee」（直发版对照各 1–2 处）。
-- [ ] 提交材料：名称/副标题/截图（双语各一组，走 selftest 渲染管线）、隐私标签「不收集数据」、审核备注写明 accessibility entitlement 用途与 feed 性质。Guideline 4.2 抗辩点 = 沙盒化 + 自更新移除 + 更新源与发布主体独立 + **皮肤差异（本节，已有像素证据）**。
+- [x] **第二形态「晾衣绳」（2026-10-15）**：货架加了与皮肤正交的**布局轴**（`App/layout_skin.rs`），第二形态是整屏宽顶部横条、绳上挂一排玻璃框照片、会摆动、悬停呼出、点击穿透（参照 Tendedero）。9 套皮 × 2 种形态任意组合。**这是 4.2 差异化的又一份像素证据**：它给用户的不是配色变化而是**交互与形态**上的第二套产品面貌（面板=键盘驱动抽屉 / 晾衣绳=鼠标手势横条），证据 = `--selftest line` 的中英双档渲染图（`PASTORY_LANG=en` 对照）。设计见 [RUST_REWRITE.md](RUST_REWRITE.md) §5.16 / §6 M8。
+- [ ] 提交材料：名称/副标题/截图（双语各一组，走 selftest 渲染管线）、隐私标签「不收集数据」、审核备注写明 accessibility entitlement 用途与 feed 性质。Guideline 4.2 抗辩点 = 沙盒化 + 自更新移除 + 更新源与发布主体独立 + **皮肤差异 + 第二形态（本组两条，均有像素证据）**。
 - [ ] bundle id 换发 + 数据迁移说明（§3 最后一条）。
+
+## 4.5 提审实测进展（2026-10-28）
+
+本轮在本机把「能自动做的」做完了，剩下三项都必须由人在账号里完成。
+
+**已实测通过：**
+
+- `./build-mas.sh` → `build/PasteJar.app`，`Apple Distribution: DIGITAL BANG INTELLIGENCE LLC (HA7KN8S95K)` 真实签名 + 安全时间戳，entitlements 三项（`app-sandbox` / `network.client` / `accessibility`）全部生效。
+- **`.pkg` 签名已通**：`productbuild` 用 `3rd Party Mac Developer Installer` 出包 exit 0，`pkgutil --check-signature` 链到 Apple Root CA 完整。**此前记录的 keychain EPERM 阻塞在当前会话不复现** —— 下次别引用旧结论，直接跑一次。
+- 文案已修一处会导致拒审的错误：`support_url` / `privacy_url` 原指向 `Claudate/pastory`（该仓库不存在，404），已改为 `Claudate/pastory-rust`（公开，含 `## 隐私` 章节）。
+- 素材：中文 5 张 + 英文 5 张，均 2880×1800；图标 `store-assets/icon/appstore-1024.png` 为 1024×1024 / RGB / **无 alpha**，符合要求。
+
+**仍需用户本人完成（本机无法绕过）：**
+
+1. **注册 App ID**：developer.apple.com → Certificates, Identifiers & Profiles → **左侧 Identifiers** → `+` → App IDs → App → Explicit，Bundle ID 填 `com.cici.snipclip` → Register。（注意别进 Certificates 页去点 `+`，那是新建证书流程，不是注册 App ID。）
+2. **建 Mac App Store provisioning profile**：同一个页面左侧 **Profiles** → `+` → Mac App Store → 选 `com.cici.snipclip` → 关联 `Apple Distribution` 证书 → 下载，放到 `~/Library/MobileDevice/Provisioning Profiles/`（现在是空的）。
+3. **App Store Connect 凭据**（自动化上传要用）：ASC → Users and Access → Integrations → App Store Connect API → 生成密钥，下载 `AuthKey_<KEYID>.p8` 放到 `~/.appstoreconnect/private_keys/`，并记下 Key ID 与 Issuer ID。本机当前**一个 `.p8` 都没有**。
+4. **审核联系人信息**：`review_first_name` / `review_last_name` / `review_phone` 三项为空，`validate` 报 3 个 error，只有你能填。
+
+**拿到 1+2 之后**本机可以一条命令出可上传的 pkg：
+
+```bash
+PROVISION_PROFILE=~/Library/MobileDevice/Provisioning\ Profiles/xxx.mobileprovision ./build-mas.sh
+```
+
+**再拿到 3 之后**用 `./upload-mas.sh --upload` 送 Transporter；没有 3 也可以在 Transporter 图形界面里用 Apple ID 登录后手工拖 pkg。
 
 ## 5. 风险与备注
 

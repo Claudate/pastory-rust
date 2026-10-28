@@ -1,0 +1,143 @@
+App Store 上架信息 · PasteJar 1.0.7
+导出时间 2026-10-28 · 来源 listing-studio 草稿
+────────────────────────────────────────
+
+【名称】
+PasteJar - 剪贴板历史
+
+【Bundle ID】
+com.cici.snipclip
+
+【SKU】
+pastejar-mas
+
+【主要类别】
+Productivity
+
+【次要类别】
+Utilities
+
+【内容版权声明】
+拥有所有内容的使用权
+
+【年龄分级】
+4+
+
+【版权声明】
+2026 DIGITAL BANG INTELLIGENCE LLC
+
+【副标题】
+复制过的，都能找回来
+
+【描述】
+PasteJar 给剪贴板装了一罐长期记忆。
+
+复制过的文字、链接、图片、截图、录屏，不再在「下一次复制」时消失，而是排成一排，等你要用的时候随时取。
+
+■ 剪贴板历史
+· 单击任意卡片即为复制，直接粘进目标输入框
+· 双击卡片直接贴进当前应用，全键盘用户可切换「双击 + 回车」
+· 搜索覆盖文本、标题，以及图片里的文字（本地 OCR）
+· Pin 起来的内容长期保留，不受自动清理影响
+· 重要内容可以加标题，一眼认出「客户 A 地址」「开票信息」
+· 文本与图片都支持二次编辑，改完替换原卡片留在历史里
+· 微信、飞书、系统截图的图，只要进了剪贴板就有独立卡片
+
+■ 截图与标注
+· 快捷键框选截图，颜色按显示器自身色彩空间取，不改画面原色
+· 矩形、椭圆、箭头、直线、画笔、文字、马赛克，七种低饱和配色
+· 文字框拖动四边即可调整，文字随宽度自动换行、字号不变
+· 本地 OCR 识别图上文字，识别结果可编辑、可复制
+· 录屏支持 MP4 与 GIF
+
+■ 两种形态，随场景切换
+· 面板：屏幕底部的抽屉，键盘与搜索驱动
+· 晾衣绳：屏幕顶部一整条，照片挂在绳上轻轻摆动，鼠标手势呼出
+· 两种形态 × 多套皮肤自由组合，外观跟随系统浅色 / 深色
+
+■ 隐私
+· 没有账号，没有统计，没有广告
+· 所有数据都在你自己的 Mac 上（应用沙盒内的 Application Support）
+· 唯一的联网请求是每天一次的版本检查，不带任何标识，可在设置里关闭
+· 密码管理器标记为隐藏的内容不会被记录
+
+PasteJar 是一个安静的菜单栏小工具：它不抢焦点，不弹窗打扰，只在你按下快捷键的时候出现。
+
+【关键词】
+剪贴板,粘贴,历史记录,截图,标注,录屏,OCR,取词,效率,菜单栏
+
+【新功能说明】
+首个版本。
+
+【支持网址】
+https://github.com/Claudate/pastory-rust
+
+【隐私政策网址】
+https://github.com/Claudate/pastory-rust#隐私
+
+【营销网址】
+（空）
+
+【联系邮箱】
+goodjackwork@gmail.com
+
+【备注】
+PasteJar is a menu-bar clipboard manager plus screenshot annotation tool.
+Everything is stored locally; there is no account and no analytics.
+
+1) Screen Recording (first screenshot only)
+   Requested on demand with the system prompt, never at launch. Used solely to
+   capture the region the user selects. No continuous capture.
+
+2) Accessibility
+   Used for one thing: synthesising a single command-V keystroke when the user
+   double-clicks a clipboard card, so the item lands in the app they were
+   typing in. It is not used to read keystrokes, monitor other apps, or collect
+   input. If this entitlement is a blocker, the feature degrades to
+   "copy + show the shortcut hint" and the rest of the app is unaffected.
+
+3) No self-update
+   The store build has the download / verify / self-replace chain compiled out
+   entirely, per Guideline 2.5.2. The daily version check is read-only and,
+   when a newer version exists, only offers "Open App Store".
+
+4) Update feed
+   One HTTPS GET per day to our own feed endpoint, no identifiers, no body
+   content, can be disabled in Settings. There is no other network traffic.
+
+5) Sign in
+   No account or sign-in is required. All features are available on first launch.
+
+6) Difference from other clipboard tools
+   Two independent interaction forms (bottom drawer / top "clothesline" strip),
+   a skin system, and an annotation canvas with on-device OCR are built in
+   rather than sold separately. Screenshots 1-5 show both forms and the
+   annotation surface.
+
+Contact: goodjackwork@gmail.com
+
+
+────────────────────────────────────────
+【还缺的 3 项 · 必填 · 只有你能提供】
+
+  联系人名字   review_first_name   （空）
+  联系人姓氏   review_last_name    （空）
+  联系电话     review_phone        （空）  参考写法 +86 138 0000 0000
+
+
+【素材槽 · 7 个全部未上传】
+
+  App 图标      1024 × 1024                必填
+  iPhone 6.1    1206 × 2622                必填
+  iPhone 6.9    1320 × 2868
+  iPhone 6.7    1284 × 2778
+  iPhone 5.5    1242 × 2208
+  iPad 13       2064 × 2752
+  iPad 11       1668 × 2420
+
+  注意：这套槽位是 iOS 的。PasteJar 是 macOS App，
+  Mac App Store 的截图尺寸是 1280×800 / 1440×900 / 2560×1600 / 2880×1800，
+  已经在 store-assets/screenshots/ 下备好 **10 张 2880×1800**（zh 5 张 + en 5 张，
+  实测确认尺寸无误），图标 store-assets/icon/appstore-1024.png 为 1024×1024 RGB、
+  无 alpha 通道（已校验，符合 App Store 要求）。
+  这 7 个 iOS 槽位可以忽略，直接在 App Store Connect 后台上传 Mac 尺寸的即可。
