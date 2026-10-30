@@ -1226,24 +1226,44 @@ define_class!(
 
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: CGRect) {
-            // 左上角是 app 自己的图标（旧的是「PasteJar」品牌字）。这一带的
-            // 高度仍按品牌字号的行高算：导航行的命中区在 mouseUp 与
-            // selftest_sidebar_row_center 里各算了一遍同一个公式，
-            // 改高度就得三处一起改，所以这里只换画什么、不动行高。
+            // 左上角是 app 的标识：笔画字形 + 品牌词（旧的是 42pt「PasteJar」
+            // 品牌字，2026-10-30 换图时曾整张纸卡贴上来过——纸色卡贴在同样
+            // 浅的侧栏上边缘消失、水彩细笔画糊成一团，于是改成只画笔画并用
+            // 文字色上色）。这一带的高度仍按品牌字号的行高算：导航行的命中
+            // 区在 mouseUp 与 selftest_sidebar_row_center 里各算了一遍同一个
+            // 公式，改高度就得三处一起改，所以只换画什么、不动行高。
             let brand_font = theme::brand_font(BRAND_SIZE);
             let brand_band = card::line_height(&brand_font);
             let brand_avail = SIDEBAR_W - 44.0;
-            if let Some(logo) = theme::logo() {
-                let s = logo.size();
-                let h = brand_band.min(brand_avail).min(52.0);
-                let w = if s.height > 0.0 { (s.width * h / s.height).min(brand_avail) } else { h };
+            let ink = theme::label();
+            let mark_h = 40.0_f64.min(brand_band);
+            let mut x = 22.0;
+            if let Some(mark) = theme::logo_mark().and_then(|m| card::tint(&m, &ink)) {
+                let s = mark.size();
+                let w = if s.height > 0.0 { s.width * mark_h / s.height } else { mark_h };
                 card::draw_image(
-                    &logo,
-                    CGRect::new(CGPoint::new(22.0, 10.0), CGSize::new(w, h)),
+                    &mark,
+                    CGRect::new(
+                        CGPoint::new(x, 10.0 + (brand_band - mark_h) / 2.0),
+                        CGSize::new(w, mark_h),
+                    ),
                     objc2_app_kit::NSCompositingOperation::SourceOver,
                     1.0,
                 );
+                x += w + 9.0;
             }
+            let word_font = theme::serif(17.0, false);
+            let word_h = card::line_height(&word_font);
+            card::draw_text(
+                CGRect::new(
+                    CGPoint::new(x, 10.0 + (brand_band - word_h) / 2.0),
+                    CGSize::new((22.0 + brand_avail - x).max(0.0), word_h),
+                ),
+                crate::app::brand::BRAND,
+                &word_font,
+                &ink,
+                None,
+            );
             let rows_top = 10.0 + card::line_height(&brand_font) + 22.0;
             let active = *self.ivars().active.borrow();
             for (i, (icon, title)) in nav_rows().into_iter().enumerate() {

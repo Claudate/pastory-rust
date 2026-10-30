@@ -10,13 +10,20 @@
 //! interaction; the *look* now lives here alone and is deliberately
 //! different.
 //!
-//! Colour comes from AppKit's semantic palette (`labelColor`,
-//! `controlBackgroundColor`, `separatorColor`, `controlAccentColor` …):
-//! each resolves against the current appearance when it is drawn, so light
-//! and dark both work with no second code path and no literal colour
-//! values. Text is the system UI font, so it follows the user's text-size
-//! setting. The brand face survives only as the wordmark and card titles
-//! (`script` / `brand_font`).
+//! The look itself is data and lives in [`crate::app::theme_skin`]: a skin
+//! bundles a colour recipe, corner radii, shadow weight, body face and
+//! panel material, and every accessor here resolves against whichever skin
+//! is selected. Nothing outside this file (and its skin table) names a
+//! colour, a radius or a font family, so adding a skin is a table row and a
+//! skin switch is a repaint.
+//!
+//! The default skin ("原生") pins nothing: it asks AppKit for its semantic
+//! palette (`labelColor`, `controlBackgroundColor`, `separatorColor`,
+//! `controlAccentColor` …), each of which resolves against the current
+//! appearance when it is drawn, so light and dark both work with no literal
+//! colour values. Text is the system UI font, so it follows the user's
+//! text-size setting. The brand face survives only as the wordmark and card
+//! titles (`script` / `brand_font`).
 //!
 //! Naming note: `serif` and the `paper*` names are kept where a rename
 //! would touch a hundred call sites with no behaviour change, but nothing
@@ -38,15 +45,17 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::AnyThread;
 use objc2_app_kit::{
-    NSBezierPath, NSColor, NSCompositingOperation, NSFont, NSFontDescriptor, NSFontWeightBold,
-    NSFontWeightMedium, NSFontWeightRegular, NSFontWeightSemibold, NSGraphicsContext, NSImage,
-    NSImageRep, NSRectFill, NSRectFillUsingOperation, NSShadow, NSView, NSWorkspace,
+    NSBezierPath, NSColor, NSCompositingOperation, NSFont, NSFontDescriptor, NSGradient,
+    NSGraphicsContext, NSImage, NSImageRep, NSRectFill, NSRectFillUsingOperation, NSShadow, NSView,
+    NSWorkspace,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextCreateImage, CGColorSpace, CGImage,
 };
 use objc2_foundation::{ns_string, NSDictionary, NSString};
+
+use crate::app::theme_skin::{self, Weight};
 
 /// Where resources live. A normal launch: the bundle's Resources. A dev run /
 /// self-test (`cargo run`, the bare binary): `<repo>/rust/target/…/pastory`
@@ -115,6 +124,37 @@ pub fn resource_named(name: &str) -> Option<Retained<NSImage>> {
 pub fn logo() -> Option<Retained<NSImage>> {
     static CELL: OnceLock<Option<usize>> = OnceLock::new();
     cached_named_image(&CELL, "Logo.png")
+}
+
+/// Brand mark without the paper card (Resources/LogoMark.png): the same
+/// watercolour glyph as an alpha-only mask, so the sidebar can tint it with
+/// the skin's ink instead of pasting a cream tile on a cream background.
+///
+/// Compiled in rather than loaded from the bundle on purpose: the build
+/// scripts copy a fixed whitelist out of `Resources/`, and a mark that only
+/// exists on disk fails softly — the wordmark still draws, so a missing
+/// brand mark would reach a release unnoticed.
+pub fn logo_mark() -> Option<Retained<NSImage>> {
+    static CELL: OnceLock<Option<usize>> = OnceLock::new();
+    let ptr = *CELL.get_or_init(|| {
+        let data = objc2_foundation::NSData::with_bytes(include_bytes!("../../../Resources/LogoMark.png"));
+        let img = NSImage::initWithData(NSImage::alloc(), &data)?;
+        if img.size().width <= 0.0 || img.size().height <= 0.0 {
+            return None;
+        }
+        Some(Retained::into_raw(img) as usize)
+    });
+    // SAFETY: same contract as `cached_named_image` — the raw reference never
+    // leaves this cell; `retain` hands the caller an owned reference.
+    unsafe { Retained::retain(ptr? as *mut NSImage) }
+}
+
+/// The 晾衣绳's clothes pin (Resources/ClothesPin.png) — game-icons'
+/// `clothespin` by Lorc, CC BY 3.0, baked to the clip's own size. Cached: a
+/// rope of ten cards redraws it thirty times a second.
+pub fn clothes_pin() -> Option<Retained<NSImage>> {
+    static CELL: OnceLock<Option<usize>> = OnceLock::new();
+    cached_named_image(&CELL, "ClothesPin.png")
 }
 
 /// Menu bar glyph (designer's folded-P asset, 1x + 2x). Template: macOS tints
@@ -224,7 +264,7 @@ impl Seeded {
     }
 }
 
-// MARK: Palette — AppKit semantic colours only
+// MARK: Palette — resolved through the selected skin
 
 /// sRGB from 0-255 octets (annotation palette constants).
 pub fn srgb_octets(red: u8, green: u8, blue: u8) -> Retained<NSColor> {
@@ -245,63 +285,78 @@ pub fn purple() -> Retained<NSColor> {
 
 /// Panel / window ground, behind everything the user sees.
 pub fn ground() -> Retained<NSColor> {
-    NSColor::windowBackgroundColor()
+    theme_skin::color(theme_skin::palette().bg, || NSColor::windowBackgroundColor())
 }
 
 /// A recessed ground: the sidebar and other inset bands. Translucent so it
 /// reads as depth over the panel material rather than a painted rectangle.
 pub fn ground_deep() -> Retained<NSColor> {
-    NSColor::underPageBackgroundColor().colorWithAlphaComponent(0.65)
+    theme_skin::color_alpha(theme_skin::palette().bg_deep, 0.65, || {
+        NSColor::underPageBackgroundColor()
+    })
 }
 
 /// Card / sheet face.
 pub fn surface() -> Retained<NSColor> {
-    NSColor::controlBackgroundColor()
+    theme_skin::color(theme_skin::palette().surface, || NSColor::controlBackgroundColor())
 }
 
 /// One step off the card face: toggle tracks, unfilled chips, wells.
 pub fn surface_alt() -> Retained<NSColor> {
-    NSColor::underPageBackgroundColor()
+    theme_skin::color(theme_skin::palette().surface_alt, || NSColor::underPageBackgroundColor())
 }
 
 /// Primary text and glyphs.
 pub fn label() -> Retained<NSColor> {
-    NSColor::labelColor()
+    theme_skin::color(theme_skin::palette().label, || NSColor::labelColor())
 }
 
 /// Secondary copy, captions, inactive glyphs.
 pub fn label_secondary() -> Retained<NSColor> {
-    NSColor::secondaryLabelColor()
+    theme_skin::color(theme_skin::palette().label_secondary, || NSColor::secondaryLabelColor())
 }
 
 /// Faintest tier: hints, disabled chrome, empty-state copy.
 pub fn label_tertiary() -> Retained<NSColor> {
-    NSColor::tertiaryLabelColor()
+    theme_skin::color(theme_skin::palette().label_tertiary, || NSColor::tertiaryLabelColor())
 }
 
 /// Hairlines, card edges, dividers.
 pub fn separator() -> Retained<NSColor> {
-    NSColor::separatorColor()
+    let p = theme_skin::palette();
+    theme_skin::color_alpha(p.separator, p.separator_alpha, || NSColor::separatorColor())
 }
 
-/// The system accent (user-chosen, blue by default): text, glyphs, borders
-/// and selection.
+/// The selection accent: fills, borders, badges, progress.
 pub fn accent() -> Retained<NSColor> {
-    NSColor::controlAccentColor()
+    theme_skin::color(theme_skin::palette().accent, || NSColor::controlAccentColor())
 }
 
 /// A soft accent wash for fills behind text — the accent at low alpha so the
 /// same value works as a pale tint in light mode and a deep tint in dark.
 pub fn accent_tint() -> Retained<NSColor> {
-    NSColor::controlAccentColor().colorWithAlphaComponent(0.18)
+    accent().colorWithAlphaComponent(0.18)
 }
 
-/// Card corner radius, on the panel's nested scale.
-pub const RADIUS_CARD: f64 = 10.0;
+/// Ink for text drawn on an [`accent`] fill (selected chips, filled
+/// buttons): white with the system accent, or the skin's own dark ink where
+/// the accent is pale enough that white would disappear into it.
+pub fn text_on_accent() -> Retained<NSColor> {
+    theme_skin::text_on_accent()
+}
+
+/// Card corner radius, on the panel's nested scale (scaled by the skin).
+pub fn radius_card() -> f64 {
+    theme_skin::radius(10.0)
+}
 /// Panel corner radius (the shelf's top corners).
-pub const RADIUS_PANEL: f64 = 12.0;
+pub fn radius_panel() -> f64 {
+    theme_skin::radius(12.0)
+}
 /// Chips, wells and other small controls.
-pub const RADIUS_CONTROL: f64 = 6.0;
+pub fn radius_control() -> f64 {
+    theme_skin::radius(6.0)
+}
 
 // MARK: Fonts
 
@@ -326,35 +381,23 @@ fn size_key(size: f64) -> String {
     format!("{:?}", size)
 }
 
-/// The system UI font at `size`, in the given weight — the body face
-/// everywhere. Following the system font is what makes the UI honour the
-/// user's text-size setting and Localized / Accessibility overrides.
-fn ui_font(size: f64, weight: f64) -> Retained<NSFont> {
-    NSFont::systemFontOfSize_weight(size, weight)
-}
-
 /// Body face. Kept under its old name because a hundred call sites say
-/// `serif`; there is no serif left in this design.
+/// `serif`; there is no serif left in this design. The face comes from the
+/// skin: the system UI font for the default look — which is what makes the
+/// UI honour the user's text-size setting — or the face the skin names.
+/// The cache key carries the skin, so a switch cannot hand back the last
+/// skin's face.
 pub fn serif(size: f64, bold: bool) -> Retained<NSFont> {
-    let key = format!("body{}{}", if bold { "b" } else { "" }, size_key(size));
+    let key = format!("body{}:{}:{}", if bold { "b" } else { "" }, theme_skin::current_id(), size_key(size));
     cached_font(&key, || {
-        // SAFETY: stable extern constants.
-        let w = unsafe {
-            if bold {
-                NSFontWeightBold
-            } else {
-                NSFontWeightRegular
-            }
-        };
-        ui_font(size, w)
+        theme_skin::ui_font(size, if bold { Weight::Bold } else { Weight::Regular })
     })
 }
 
 /// Semibold body face — section headings and emphasised labels.
 pub fn semibold(size: f64) -> Retained<NSFont> {
-    let key = format!("semibold{}", size_key(size));
-    // SAFETY: stable extern constant.
-    cached_font(&key, || ui_font(size, unsafe { NSFontWeightSemibold }))
+    let key = format!("semibold{}:{}", theme_skin::current_id(), size_key(size));
+    cached_font(&key, || theme_skin::ui_font(size, Weight::Semibold))
 }
 
 /// `NSFontDescriptor(fontAttributes:)` — the attributes dictionary types as
@@ -376,14 +419,19 @@ fn descriptor_with_attributes(
     unsafe { NSFontDescriptor::fontDescriptorWithFontAttributes(Some(&dict)) }
 }
 
-/// Brand wordmark face: Ysabeau Office when it registered, else the system
-/// medium weight. The bundled file is a variable font, so it resolves through
-/// its FAMILY name — the PostScript name "YsabeauOffice-Regular" matches no
-/// face and would silently fall back to the system font. CJK glyphs land on
-/// the system face through the normal cascade.
+/// Brand wordmark face. A skin that names one gets it; otherwise Ysabeau
+/// Office when it registered, else the system medium weight. The bundled
+/// file is a variable font, so it resolves through its FAMILY name — the
+/// PostScript name "YsabeauOffice-Regular" matches no face and would
+/// silently fall back to the system font. CJK glyphs land on the system face
+/// through the normal cascade.
 pub fn script(size: f64) -> Retained<NSFont> {
+    let skin_face = theme_skin::brand_face();
+    let key = format!("brand:{}:{}", theme_skin::current_id(), size_key(size));
+    if !skin_face.is_empty() {
+        return cached_font(&key, || theme_skin::ui_font(size, Weight::Bold));
+    }
     register_brand_fonts();
-    let key = format!("brand{}", size_key(size));
     cached_font(&key, || {
         let d = descriptor_with_attributes(&[(
             ns_string!("NSFontNameAttribute"),
@@ -392,7 +440,7 @@ pub fn script(size: f64) -> Retained<NSFont> {
         let face = NSFont::fontWithDescriptor_size(&d, size).filter(|f| {
             f.familyName().map(|n| n.to_string()).as_deref() == Some("Ysabeau Office")
         });
-        face.unwrap_or_else(|| ui_font(size, unsafe { NSFontWeightMedium }))
+        face.unwrap_or_else(|| theme_skin::ui_font(size, Weight::Medium))
     })
 }
 
@@ -460,8 +508,54 @@ pub fn draw_desk(path: &NSBezierPath) {
 /// The panel ground (window grounds); the live shelf adds a material behind
 /// this in `shelf::panel`.
 pub fn draw_ground(r: CGRect) {
-    ground().setFill();
-    NSRectFill(r);
+    draw_panel_ground(r);
+}
+
+/// The panel's ground, in order of who owns it: the user's own background
+/// image blended over the skin's colour scheme (only in the content column —
+/// `photo_rect`, right of the sidebar — the sidebar keeps the skin's own
+/// recessed band), else the skin's gradient wash, else the flat colour the
+/// skin names.
+///
+/// The photo's opacity (`background::dim`) is how much of it covers the
+/// skin's ground; 0.0 paints no photo at all. A photo and a gradient are
+/// painted opaque on purpose: both are deliberate choices about the panel's
+/// surface, and neither is offered by a skin that wants its material to
+/// show through (原生, the only one with glass).
+pub fn draw_panel_ground(r: CGRect) {
+    draw_panel_ground_in(r, r);
+}
+
+/// The same ground with the photo limited to `photo_rect` (a sub-rect of `r`);
+/// the sidebar passes the full bounds for the skin, and the content column
+/// for the photo.
+pub fn draw_panel_ground_in(r: CGRect, photo_rect: CGRect) {
+    // The skin always owns the whole surface first: the photo blends onto it.
+    if let Some(g) = gradient() {
+        g.drawInRect_angle(r, 90.0);
+    } else {
+        ground().setFill();
+        NSRectFill(r);
+    }
+    let Some(img) = crate::app::background::active_image() else {
+        return;
+    };
+    // The photo at the user's opacity, over the skin's ground — nothing
+    // veils it afterwards (a full-alpha veil would erase the photo, not
+    // soften it). A 0.0 step paints nothing; the strip never offers it.
+    let a = crate::app::background::dim().clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return;
+    }
+    crate::app::background::draw_cover_alpha(&img, photo_rect, a);
+}
+
+/// The skin's ground wash, or None on a skin that paints one flat colour.
+fn gradient() -> Option<Retained<NSGradient>> {
+    let g = theme_skin::current().gradient.as_ref()?;
+    let from = theme_skin::color(g.from, || NSColor::windowBackgroundColor());
+    let to = theme_skin::color(g.to, || NSColor::windowBackgroundColor());
+    NSGradient::initWithStartingColor_endingColor(NSGradient::alloc(), &from, &to)
 }
 
 /// How much of the panel's material shows through the ground: 0.0 paints the
@@ -481,13 +575,13 @@ pub fn set_panel_material_alpha(a: f64) {
 
 /// The shelf's ground where a material sits behind it. Opaque while the glass
 /// is off, so nothing changes for the render self-tests and the capture
-/// chrome, which all call `draw_ground` instead.
+/// chrome, which all call `draw_ground` instead. A skin with no material (or
+/// one that wants a solid ground) paints itself opaque regardless.
 pub fn ground_over_material() -> Retained<NSColor> {
-    ground().colorWithAlphaComponent(1.0 - 0.85 * panel_material_alpha())
+    ground().colorWithAlphaComponent(1.0 - 0.85 * theme_skin::glass() * panel_material_alpha())
 }
 
-/// Card / sheet layer: one radius, one soft shadow. Swift default radius is
-/// `paperRadius` (6); the new skin passes `RADIUS_CARD` or `RADIUS_CONTROL`.
+/// Card / sheet layer: one radius, one soft shadow, weighted by the skin.
 pub fn card_layer(v: &NSView, radius: f64) {
     v.setWantsLayer(true);
     if let Some(layer) = v.layer() {
@@ -495,7 +589,10 @@ pub fn card_layer(v: &NSView, radius: f64) {
         let () = unsafe { objc2::msg_send![&*layer, setCornerRadius: radius] };
     }
     let s = NSShadow::new();
-    s.setShadowColor(Some(&NSColor::colorWithCalibratedWhite_alpha(0.0, 0.22)));
+    s.setShadowColor(Some(&NSColor::colorWithCalibratedWhite_alpha(
+        0.0,
+        theme_skin::shadow_alpha(0.22),
+    )));
     s.setShadowBlurRadius(10.0);
     s.setShadowOffset(CGSize::new(0.0, -2.0));
     v.setShadow(Some(&s));
@@ -891,7 +988,7 @@ mod tests {
         let f = serif(14.0, false);
         assert_eq!(f.pointSize(), 14.0);
         let family = f.familyName().map(|n| n.to_string()).unwrap_or_default();
-        let system = NSFont::systemFontOfSize_weight(14.0, unsafe { NSFontWeightRegular });
+        let system = NSFont::systemFontOfSize_weight(14.0, unsafe { objc2_app_kit::NSFontWeightRegular });
         assert_eq!(family, system.familyName().map(|n| n.to_string()).unwrap_or_default());
         let b = serif(14.0, true);
         assert_ne!(
@@ -948,9 +1045,9 @@ mod tests {
             if let Some(cg) = offscreen_cg(card.size, |_| {
                 ground().setFill();
                 NSRectFill(CGRect::new(pt(-40.0, -40.0), CGSize::new(card.size.width + 80.0, card.size.height + 80.0)));
-                let t = rounded_rect(CGRect::new(pt(16.0, 16.0), CGSize::new(256.0, 388.0)), RADIUS_CARD);
+                let t = rounded_rect(CGRect::new(pt(16.0, 16.0), CGSize::new(256.0, 388.0)), radius_card());
                 draw_surface(&t, &surface());
-                let chip = rounded_rect(CGRect::new(pt(32.0, 360.0), CGSize::new(120.0, 26.0)), RADIUS_CONTROL);
+                let chip = rounded_rect(CGRect::new(pt(32.0, 360.0), CGSize::new(120.0, 26.0)), radius_control());
                 accent_tint().setFill();
                 chip.fill();
             }) {
@@ -959,7 +1056,7 @@ mod tests {
             }
             if let Some(cg) = offscreen_cg(CGSize::new(320.0, 120.0), |r| {
                 draw_ground(r);
-                let p = rounded_rect_corners(CGRect::new(pt(10.0, 15.0), CGSize::new(300.0, 90.0)), RADIUS_PANEL, Corners::TOP);
+                let p = rounded_rect_corners(CGRect::new(pt(10.0, 15.0), CGSize::new(300.0, 90.0)), radius_panel(), Corners::TOP);
                 draw_surface(&p, &surface());
             }) {
                 let png = crate::capture::screenshotter::png_data(&cg).unwrap();
