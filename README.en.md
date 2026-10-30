@@ -177,7 +177,7 @@ Single-crate Rust (hand-written AppKit via objc2); stable Rust + Command Line To
 
 ## Credits & license
 
-Typefaces: [Caveat](https://fonts.google.com/specimen/Caveat) and [Ysabeau Office](https://fonts.google.com/specimen/Ysabeau+Office) (SIL Open Font License). Interaction inspired by [Paste](https://pasteapp.io); annotation style after [Excalidraw](https://excalidraw.com).
+Typefaces: [Caveat](https://fonts.google.com/specimen/Caveat) and [Ysabeau Office](https://fonts.google.com/specimen/Ysabeau+Office) (SIL Open Font License). Interaction inspired by [Paste](https://pasteapp.io); annotation style after [Excalidraw](https://excalidraw.com). The clothes pin on the 晾衣绳 shelf is [clothespin](https://game-icons.net/1x1/lorc/clothespin.html) from [game-icons.net](https://game-icons.net) by Lorc, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
 
 Thanks to [@behindthebeat](https://github.com/behindthebeat) for making search fast with large histories, and for resizable, wrapping text annotations.
 

@@ -201,7 +201,8 @@ pub fn draw(view: &WelcomeCardView) {
         objc2_app_kit::NSGraphicsContext::saveGraphicsState_class();
         crate::shelf::card::shadow(&objc2_app_kit::NSColor::blackColor().colorWithAlphaComponent(0.4), 9.0, 2.0, 6.0).set();
         theme::surface().setFill();
-        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(card, theme::RADIUS_CARD, theme::RADIUS_CARD).fill();
+        let r = theme::radius_card();
+        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(card, r, r).fill();
         objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
     }
     // Header: logo · 「PasteJar」 serif 16, rule under.

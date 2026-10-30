@@ -16,7 +16,7 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSAppearanceCustomization, NSPanel, NSView, NSWindowStyleMask};
+use objc2_app_kit::{NSAppearanceCustomization, NSPanel, NSStringDrawing, NSView, NSWindowDelegate, NSWindowStyleMask};
 use objc2_foundation::{
     NSData, NSError, NSString, NSURL, NSURLSession, NSURLSessionConfiguration,
     NSURLSessionDownloadTask, NSURLSessionTask,
@@ -81,7 +81,32 @@ pub struct ProgressWindowIvars {
     track: std::cell::RefCell<Option<Retained<ProgressTrack>>>,
     cancel_button: std::cell::RefCell<Option<Retained<objc2_app_kit::NSButton>>>,
     cancel_task: std::cell::RefCell<Option<Retained<NSURLSessionDownloadTask>>>,
+    delegate: std::cell::RefCell<Option<Retained<ProgressWinDelegate>>>,
 }
+
+/// `windowDidResize:` — re-place the four pieces against the new box.
+struct ProgressWinDelegateIvars {
+    window: std::cell::RefCell<usize>,
+}
+
+define_class!(
+    // SAFETY: NSObject window delegate; main-thread only.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = ProgressWinDelegateIvars]
+    struct ProgressWinDelegate;
+
+    unsafe impl NSObjectProtocol for ProgressWinDelegate {}
+
+    unsafe impl NSWindowDelegate for ProgressWinDelegate {
+        #[unsafe(method(windowDidResize:))]
+        fn window_did_resize(&self, _n: &objc2_foundation::NSNotification) {
+            let raw = *self.ivars().window.borrow();
+            let w: &ProgressWindow = unsafe { &*(raw as *const ProgressWindow) };
+            Window::layout(w, w.contentView().map(|c| c.bounds().size));
+        }
+    }
+);
 
 define_class!(
     // SAFETY:
@@ -133,7 +158,7 @@ impl Window {
         let mtm = MainThreadMarker::new().expect("main thread");
         let rect = objc2_core_foundation::CGRect::new(
             objc2_core_foundation::CGPoint::ZERO,
-            objc2_core_foundation::CGSize::new(380.0, 150.0),
+            objc2_core_foundation::CGSize::new(420.0, 150.0),
         );
         let this = mtm.alloc::<ProgressWindow>().set_ivars(ProgressWindowIvars {
             title: std::cell::RefCell::new(None),
@@ -141,12 +166,15 @@ impl Window {
             track: std::cell::RefCell::new(None),
             cancel_button: std::cell::RefCell::new(None),
             cancel_task: std::cell::RefCell::new(None),
+            delegate: std::cell::RefCell::new(None),
         });
         let this: Retained<ProgressWindow> = unsafe {
             msg_send![
                 super(this),
                 initWithContentRect: rect,
                 styleMask: NSWindowStyleMask::Titled
+                    | NSWindowStyleMask::Closable
+                    | NSWindowStyleMask::Resizable
                     | NSWindowStyleMask::FullSizeContentView
                     | NSWindowStyleMask::NonactivatingPanel,
                 backing: objc2_app_kit::NSBackingStoreType::Buffered,
@@ -171,8 +199,6 @@ impl Window {
         let content = crate::annotate::ocr_panel::ground_view_export(rect);
         this.setContentView(Some(&content));
 
-        let w = rect.size.width;
-        let h = rect.size.height;
         let title_field = label(&l("正在下载 PasteJar %@…").replacen("%@", &version, 1), true, true);
         let detail_field = label(&l("正在连接更新源…"), false, false);
         let track_view: Retained<ProgressTrack> = {
@@ -194,23 +220,72 @@ impl Window {
         content.addSubview(&track_view);
         content.addSubview(&cancel);
 
-        place(&*title_field, 22.0, h - 30.0 - 22.0, w - 44.0, 22.0);
-        place(&*track_view, 22.0, h - 30.0 - 22.0 - 14.0 - 8.0, w - 44.0, 8.0);
-        let cb = cancel.frame().size;
-        place(&*cancel, w - 18.0 - cb.width, 14.0, cb.width, cb.height);
-        place(
-            &*detail_field,
-            22.0,
-            14.0 + (cb.height - 20.0) / 2.0,
-            w - 18.0 - cb.width - 12.0 - 22.0,
-            20.0,
-        );
-
         *this.ivars().title.borrow_mut() = Some(title_field);
         *this.ivars().detail.borrow_mut() = Some(detail_field);
         *this.ivars().track.borrow_mut() = Some(track_view);
         *this.ivars().cancel_button.borrow_mut() = Some(cancel);
-        Window { inner: this }
+
+        // Width follows the title text (a longer version string or English
+        // copy gets a wider panel); height stays the two-line strip at 150.
+        let title_font = theme::serif(16.0, true);
+        let title_w = unsafe {
+            NSString::from_str(&l("正在下载 PasteJar %@…").replacen("%@", &version, 1))
+                .sizeWithAttributes(Some(&crate::shelf::card::attrs(
+                    &title_font,
+                    &theme::label(),
+                    None,
+                )))
+        }
+        .width;
+        let width = (title_w + 44.0).max(360.0);
+        this.setContentSize(objc2_core_foundation::CGSize::new(width, 150.0));
+
+        // `windowDidResize:` re-places the four pieces from the live box.
+        let delegate: Retained<ProgressWinDelegate> = unsafe {
+            let d = mtm.alloc::<ProgressWinDelegate>().set_ivars(ProgressWinDelegateIvars {
+                window: std::cell::RefCell::new(Retained::as_ptr(&this) as usize),
+            });
+            msg_send![super(d), init]
+        };
+        this.setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*delegate)));
+        *this.ivars().delegate.borrow_mut() = Some(delegate);
+
+        let window = Window { inner: this };
+        Window::layout(&window.inner, Some(objc2_core_foundation::CGSize::new(width, 150.0)));
+        window
+    }
+
+    /// Place title / track / detail / cancel against the panel's content box —
+    /// once at build, then on every resize (`windowDidResize:`).
+    fn layout(panel: &ProgressWindow, size: Option<objc2_core_foundation::CGSize>) {
+        let Some(sz) = size else { return };
+        let (w, h) = (sz.width, sz.height);
+        let title = panel.ivars().title.borrow().clone();
+        let detail = panel.ivars().detail.borrow().clone();
+        let track = panel.ivars().track.borrow().clone();
+        let cancel = panel.ivars().cancel_button.borrow().clone();
+        let cb = cancel
+            .as_ref()
+            .map(|c| c.frame().size)
+            .unwrap_or(objc2_core_foundation::CGSize::new(0.0, 0.0));
+        if let Some(t) = title.as_ref() {
+            place(&**t, 22.0, h - 30.0 - 22.0, w - 44.0, 22.0);
+        }
+        if let Some(t) = track.as_ref() {
+            place(&**t, 22.0, h - 30.0 - 22.0 - 14.0 - 8.0, w - 44.0, 8.0);
+        }
+        if let Some(c) = cancel.as_ref() {
+            place(&**c, w - 18.0 - cb.width, 14.0, cb.width, cb.height);
+        }
+        if let Some(d) = detail.as_ref() {
+            place(
+                &**d,
+                22.0,
+                14.0 + (cb.height - 20.0) / 2.0,
+                (w - 18.0 - cb.width - 12.0 - 22.0).max(40.0),
+                20.0,
+            );
+        }
     }
 
     pub fn show(&self) {

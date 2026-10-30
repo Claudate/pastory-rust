@@ -49,6 +49,14 @@ pub struct ShelfPanelController {
     /// The live panel carries the material; a snapshot cannot composite one.
     /// See `build_view` in `shelf::view` where it is read.
     material: Cell<bool>,
+    /// Set by `show()`: the shelf wants the keyboard and has not got it yet.
+    ///
+    /// Activation is asynchronous, so the `makeKeyWindow()` that runs in
+    /// `show()` itself finds nothing to take — the process is not yet
+    /// frontmost in the window server's eyes. This flag lets the poll tock
+    /// keep trying until the app really is active, which is the only moment a
+    /// key window can be taken at all.
+    want_key: Cell<bool>,
 }
 
 static CONTROLLER: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -67,6 +75,7 @@ pub fn controller() -> &'static ShelfPanelController {
             watching_switches: Cell::new(false),
             poll_timer: RefCell::new(None),
             material: Cell::new(false),
+            want_key: Cell::new(false),
         };
         Box::into_raw(Box::new(c)) as usize
     });
@@ -113,6 +122,27 @@ pub(crate) fn content_view() -> Option<Retained<NSView>> {
     controller().panel.borrow().as_ref().and_then(|p| p.contentView())
 }
 
+/// Self-test hook: whether the *drawer's* window is on screen, whatever form
+/// is current. `is_visible` answers for the running form, so a test asserting
+/// "the drawer went away when the form switched" cannot use it — by then the
+/// switch has changed what the question means.
+pub(crate) fn debug_panel_window_visible() -> bool {
+    controller()
+        .panel
+        .borrow()
+        .as_ref()
+        .map(|p| p.isVisible())
+        .unwrap_or(false)
+}
+
+/// Self-test hook: the live `ShelfPanel` itself. The keyboard table in
+/// `handle` only runs from this window's `sendEvent:`, so a test that wants
+/// the real key route (rather than `handle` called directly) needs the
+/// window, not just its content view.
+pub(crate) fn selftest_window() -> Option<Retained<ShelfPanel>> {
+    controller().panel.borrow().clone()
+}
+
 /// `makePanel` — borderless, non-activating, status-bar level, clear.
 fn make_panel(mtm: MainThreadMarker) -> Retained<ShelfPanel> {
     let p = ShelfPanel::new(
@@ -152,10 +182,46 @@ fn attach(mtm: MainThreadMarker, size: CGSize) -> Retained<ShelfRootView> {
 
 use crate::shelf::view::ShelfRootView;
 
-/// Build the panel and its view tree at launch; the first ⇧⌘V does not pay
-/// for it (`prewarm`).
+/// Point the model at the repaint. Without it a search that lands shows up on
+/// the next 0.25 s poll tick; with it the shelf updates on the next pass of the
+/// main queue. Correctness comes from `reload` draining completions either way.
+///
+/// The closure captures nothing on purpose: `set_notify` asks for `Send + Sync`
+/// because the search worker holds it, but it is only ever called on the main
+/// queue (the worker dispatches it there). Closing over the view's
+/// thread-local state would make it non-`Send`.
+///
+/// Both forms install it: the hook repaints whichever tree is up, so a
+/// background search landing redraws the rope as well as the drawer.
+pub(crate) fn install_notify_hook() {
+    with_model_mut(|m| {
+        m.set_notify(Some(std::sync::Arc::new(|| crate::shelf::view::refresh())))
+    });
+}
+
+/// Remember the app in front right now, so a click-copy in either form can
+/// hand the keyboard (and a ⌘V) back to it. `show()` and the line strip's
+/// reveal both call this, which is why it lives here and not inside a form.
+pub(crate) fn remember_previous_app() {
+    let ws = NSWorkspace::sharedWorkspace();
+    if let Some(front) = ws.frontmostApplication() {
+        if !front.isEqual(Some(&NSRunningApplication::currentApplication())) {
+            *controller().previous_app.borrow_mut() = Some(front);
+        }
+    }
+}
+
+/// Build the shelf for launch; the first ⇧⌘V does not pay for it (`prewarm`).
+///
+/// Which form gets built is this process's to decide (`layout_skin`), so the
+/// shell keeps calling one entry point whatever the form is.
 pub fn prewarm() {
     watch_app_switches();
+    if crate::app::layout_skin::is_line() {
+        crate::shelf::line_panel::prewarm();
+        with_model_mut(|m| m.prewarm_search());
+        return;
+    }
     let mtm = MainThreadMarker::new().expect("main thread");
     let p = ensure_panel();
     p.setFrame_display(CGRect::new(CGPoint::ZERO, CGSize::new(1200.0, 480.0)), false);
@@ -163,7 +229,58 @@ pub fn prewarm() {
     crate::app::theme::set_panel_material_alpha(1.0);
     let root = attach(mtm, CGSize::new(1200.0, 480.0));
     root.layoutSubtreeIfNeeded();
+    install_notify_hook();
     with_model_mut(|m| m.prewarm_search());
+}
+
+/// Swap the shelf's whole form (`PanelCommand::Relayout`).
+///
+/// Deliberately *not* `retheme`: a form swap must move and resize the window
+/// — the drawer rises from the bottom edge, the strip hangs from the top —
+/// whereas a skin swap keeps the frame so the shelf does not jump. The two
+/// forms own separate windows, so a swap also has to put the other one away,
+/// or a strip would sit on screen behind the drawer.
+pub fn relayout() {
+    if crate::app::layout_skin::is_line() {
+        // Panel → line: take the drawer down before the strip goes up. It has
+        // to go through `hide_panel_window` and not `hide`: the form is
+        // already 晾衣绳 here, so `hide` would answer for the strip — retract
+        // one that is not up yet — and leave the drawer (with the settings
+        // page on it) sitting at the bottom of the screen, which is what the
+        // user saw when they picked 晾衣绳 in 设置.
+        retheme();
+        hide_panel_window();
+        crate::shelf::line_panel::relayout();
+        // Then show the form that was picked. The strip parks itself above the
+        // screen and only comes out when the pointer reaches the menu bar, so
+        // switching from the settings page would otherwise leave the user
+        // looking at nothing. `show` grants the no-retract grace, so the
+        // pointer — left wherever the click that switched put it — cannot take
+        // the strip straight back down.
+        crate::shelf::line_panel::show();
+    } else {
+        // Line → panel: the strip must not linger above the drawer, and its
+        // clock has to stop — a panel-form process has nothing to watch for.
+        crate::shelf::line_panel::hide();
+        crate::shelf::line_panel::suspend();
+        retheme();
+    }
+}
+
+/// Rebuild the view tree after a skin change. Every view caches the face and
+/// the radii it was built with, so a repaint is not enough — this is the one
+/// thing a skin switch has to do besides storing the choice. The panel keeps
+/// its frame, so the shelf does not move.
+pub fn retheme() {
+    let Some(p) = controller().panel.borrow().clone() else { return };
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let size = p.frame().size;
+    let root = attach(mtm, size);
+    root.setFrame(CGRect::new(CGPoint::ZERO, size));
+    root.layoutSubtreeIfNeeded();
+    if p.isVisible() {
+        p.displayIfNeeded();
+    }
 }
 
 /// The shelf's window number while visible (`ShelfPanelController.windowID`)
@@ -182,8 +299,13 @@ pub fn set_hold_open(v: bool) {
     controller().hold_open.set(v);
 }
 
-/// The screen rect of the shelf while visible (`frameOnScreen`).
+/// The screen rect of the shelf while visible (`frameOnScreen`). Both forms
+/// answer through this — the desktop-note drop and the outside click test
+/// read it, and neither knows which shape the shelf has.
 pub fn frame_on_screen() -> Option<CGRect> {
+    if crate::app::layout_skin::is_line() {
+        return crate::shelf::line_panel::frame_on_screen();
+    }
     let p = controller().panel.borrow().clone()?;
     if !p.isVisible() {
         return None;
@@ -192,6 +314,9 @@ pub fn frame_on_screen() -> Option<CGRect> {
 }
 
 pub fn is_visible() -> bool {
+    if crate::app::layout_skin::is_line() {
+        return crate::shelf::line_panel::is_visible();
+    }
     controller()
         .panel
         .borrow()
@@ -200,12 +325,38 @@ pub fn is_visible() -> bool {
         .unwrap_or(false)
 }
 
+/// Leave the panel visible but no longer the key window — the state the shelf
+/// sits in after a copy hands the keyboard back to the previous app, and the
+/// one every self-test above accidentally skipped by going straight from
+/// `show()` (key) to the click. `keep_open_on_resign` stops the resign from
+/// triggering the hide.
+pub fn selftest_drop_key() {
+    let c = controller();
+    c.keep_open_on_resign.set(true);
+    if let Some(p) = c.panel.borrow().as_ref() {
+        unsafe {
+            // SAFETY: `resignKeyWindow` has no generated binding.
+            let _: () = msg_send![&**p, resignKeyWindow];
+        }
+    }
+}
+
 pub fn refocus() {
     if let Some(p) = controller().panel.borrow().as_ref() {
         if p.isVisible() {
             p.makeKeyWindow();
         }
     }
+}
+
+/// True while a system dialog (open / save / alert) owns the screen.
+///
+/// The poll timer below keeps firing inside that dialog's nested event loop,
+/// so the view refresh has to stand down: repainting mid-dialog can hand the
+/// keyboard back to the shelf, and — when the dialog's caller still holds the
+/// model borrow — borrowing again aborts the process. See `view::refresh`.
+pub fn dialog_open() -> bool {
+    controller().hold_open.get()
 }
 
 /// Run a system dialog (open / save / alert) from the shelf: the shelf
@@ -223,13 +374,7 @@ pub fn with_dialog<T>(body: impl FnOnce() -> T) -> T {
         }
     }
     let mtm = MainThreadMarker::new().expect("main thread");
-    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-    unsafe {
-        // Modern activation first; the legacy call is the fallback.
-        let _: () = msg_send![&app, activate];
-    }
-    #[allow(deprecated)]
-    app.activateIgnoringOtherApps(true);
+    activate_app(mtm);
     let result = body();
     if let Some(p) = &panel {
         p.setLevel(STATUS_BAR_LEVEL);
@@ -240,6 +385,10 @@ pub fn with_dialog<T>(body: impl FnOnce() -> T) -> T {
 }
 
 pub fn toggle() {
+    if crate::app::layout_skin::is_line() {
+        crate::shelf::line_panel::toggle();
+        return;
+    }
     if is_visible() {
         hide();
     } else {
@@ -247,8 +396,32 @@ pub fn toggle() {
     }
 }
 
+/// Open the settings page. The page lives in the panel form, so from the 晾衣绳
+/// this switches the shelf to the panel (see `line_panel::switch_to_settings`)
+/// rather than silently doing nothing — the strip never owns the keyboard, so a
+/// settings window has nowhere else to be. In the panel form it is the original
+/// path.
+pub fn show_settings() {
+    if crate::app::layout_skin::is_line() {
+        crate::shelf::line_panel::switch_to_settings();
+        return;
+    }
+    if !is_visible() {
+        show();
+    }
+    with_model_mut(|m| m.show_settings = true);
+    crate::shelf::view::refresh();
+}
+
 /// Open (if needed) with the search box focused (`showSearch`).
 pub fn show_search() {
+    if crate::app::layout_skin::is_line() {
+        // The strip has no search box — it never owns the keyboard. A summon
+        // just brings the strip up; its right-click menu carries the way back
+        // to the panel, where search and the settings live.
+        crate::shelf::line_panel::show();
+        return;
+    }
     if !is_visible() {
         show();
     }
@@ -260,14 +433,15 @@ pub fn show_search() {
 }
 
 pub fn show() {
+    // The form is the shelf's, not this module's: the strip never takes the
+    // keyboard, so its whole reveal path is the other module's.
+    if crate::app::layout_skin::is_line() {
+        crate::shelf::line_panel::show();
+        return;
+    }
     let mtm = MainThreadMarker::new().expect("main thread");
     let p = ensure_panel();
-    let ws = NSWorkspace::sharedWorkspace();
-    if let Some(front) = ws.frontmostApplication() {
-        if !front.isEqual(Some(&NSRunningApplication::currentApplication())) {
-            *controller().previous_app.borrow_mut() = Some(front);
-        }
-    }
+    remember_previous_app();
     controller().keep_open_on_resign.set(false);
     // Decode the first row of thumbnails while the shelf slides in.
     crate::clipboard::store::with(|s| {
@@ -308,6 +482,17 @@ pub fn show() {
     p.setFrame_display(target, false);
     p.setAlphaValue(0.0);
     root.setFrame(CGRect::new(CGPoint::new(0.0, -SLIDE), target.size));
+    // Activate the app before the panel comes forward.
+    //
+    // The panel is a `NonactivatingPanel`: `makeKeyWindow` makes the *window*
+    // key, but the app itself stays in the background. macOS then routes no
+    // keyboard to it at all — the panel looks key, yet a click starts no
+    // field editor and every keystroke goes to whatever app is active. That
+    // is the report exactly: the search box stayed grey, a click put no
+    // caret in it, and typing did nothing. `withDialog` already activates
+    // for the same reason; opening the shelf needs it too.
+    activate_app(mtm);
+    controller().want_key.set(true);
     p.orderFrontRegardless();
     p.makeKeyWindow();
     p.makeFirstResponder(None);
@@ -318,7 +503,50 @@ pub fn show() {
     });
 }
 
+/// Bring this accessory app to the front so the window server delivers keys
+/// to it. A `NonactivatingPanel` alone only makes the window key, which is not
+/// enough: an inactive app receives no keyboard events at all.
+///
+/// The shared implementation lives in `app::activation`; new callers use that,
+/// and this copy is kept because the shelf's own show path predates it.
+///
+/// `NSApplication.activate()` does nothing here — an accessory process has no
+/// Dock icon and no window that counts as the app's own, so the cooperative
+/// activation rules leave it in the background and every keystroke still goes
+/// to the previously active app. `NSRunningApplication.activate(options:)`
+/// (macOS 14+) is the call that actually brings the process forward, verified
+/// against real window-server events: with it the panel's own ⎋ closes the
+/// shelf, without it nothing reaches the app at all.
+fn activate_app(_mtm: MainThreadMarker) {
+    let app = NSRunningApplication::currentApplication();
+    // `ActivateIgnoringOtherApps` is deprecated in favour of the cooperative
+    // activation rules, but an accessory process owns no window that the
+    // system counts as its own, so the cooperative path declines and this flag
+    // is the only one that brings the process forward.
+    #[allow(deprecated)]
+    let _ = app.activateWithOptions(
+        objc2_app_kit::NSApplicationActivationOptions::ActivateIgnoringOtherApps,
+    );
+}
+
 pub fn hide() {
+    if crate::app::layout_skin::is_line() {
+        crate::shelf::line_panel::hide();
+        return;
+    }
+    hide_panel_window();
+}
+
+/// Take the drawer's window down — fade it out, then order it out — and stop
+/// the two things only a visible drawer needs (the repaint poll, the
+/// outside-click monitor).
+///
+/// Split out of `hide` for the form switch: `hide` dispatches on the *current*
+/// form, and by the time a switch has to put the drawer away `layout_skin`
+/// already answers 晾衣绳. Going through `hide` there would retract a strip
+/// that is not up yet and leave the drawer on screen (`panel::relayout`).
+fn hide_panel_window() {
+    stop_poll_timer();
     with_model_mut(|m| m.cancel_pending_hand_back());
     remove_outside_monitor();
     controller().keep_open_on_resign.set(false);
@@ -357,13 +585,30 @@ fn watch_app_switches() {
             let n = n.as_ref();
             let Some(app) = activated_app(n) else { return };
             let is_current = app.isEqual(Some(&NSRunningApplication::currentApplication()));
+            if is_current {
+                // The activation `show()` asks for lands asynchronously.
+                // `activateWithOptions` returns — and `isActive()` already
+                // answers true — while the window server is still showing the
+                // previous app, so the `makeKeyWindow()` that runs in the same
+                // turn finds no key to take. This notification is the moment
+                // the process is genuinely frontmost: take the keyboard here,
+                // because nothing after `show()` ever will.
+                let c = controller();
+                let p = c.panel.borrow().clone();
+                if let Some(p) = p {
+                    if p.isVisible() && !p.isKeyWindow() && !c.hold_open.get() {
+                        p.makeKeyWindow();
+                    }
+                }
+                return;
+            }
             let is_previous = controller()
                 .previous_app
                 .borrow()
                 .as_ref()
                 .map(|p| app.isEqual(Some(&**p)))
                 .unwrap_or(false);
-            if is_current || is_previous {
+            if is_previous {
                 return;
             }
             let c = controller();
@@ -429,7 +674,10 @@ fn remove_outside_monitor() {
 
 /// Thumbnail decode + store writes invalidate the cards; SwiftUI observes,
 /// AppKit polls lightly while the shelf is up.
-fn install_poll_timer() {
+///
+/// Visible to the self-tests so they can reproduce the modal re-entrancy the
+/// pin-delete confirm used to hit (`--selftest deletepin`).
+pub(crate) fn install_poll_timer() {
     let c = controller();
     if c.poll_timer.borrow().is_some() {
         return;
@@ -437,12 +685,76 @@ fn install_poll_timer() {
     unsafe {
         let block = block2::RcBlock::new(|_: std::ptr::NonNull<objc2_foundation::NSTimer>| {
             crate::shelf::view::refresh();
+            // Take the keyboard once the app is genuinely frontmost.
+            //
+            // `show()` asks to activate and asks to be key in the same turn,
+            // but the activation lands later: `isActive()` reports true while
+            // the window server still shows the previous app, so that earlier
+            // `makeKeyWindow()` is a no-op. Until the process really is in
+            // front, a keystroke is delivered to nobody and a click starts no
+            // field editor — the shelf looks key and behaves dead. This is the
+            // retry that closes the gap.
+            let c = controller();
+            if c.want_key.get() {
+                let p = c.panel.borrow().clone();
+                if let Some(p) = p {
+                    if !p.isVisible() {
+                        c.want_key.set(false);
+                    } else if !p.isKeyWindow() {
+                        if NSRunningApplication::currentApplication().isActive() {
+                            p.makeKeyWindow();
+                        }
+                    } else {
+                        c.want_key.set(false);
+                    }
+                }
+            }
         });
         let t = objc2_foundation::NSTimer::timerWithTimeInterval_repeats_block(0.25, true, &block);
         t.setTolerance(0.1);
         let mode: &'static objc2_foundation::NSRunLoopMode = objc2_foundation::NSRunLoopCommonModes;
         objc2_foundation::NSRunLoop::mainRunLoop().addTimer_forMode(&t, mode);
         *c.poll_timer.borrow_mut() = Some(Retained::into_raw(t) as usize);
+    }
+}
+
+/// The shelf is going away: stop the repaint poll. It is installed on every
+/// show, and without this it would keep reloading a hidden tree four times a
+/// second for the life of the process.
+fn stop_poll_timer() {
+    let c = controller();
+    let Some(raw) = c.poll_timer.borrow_mut().take() else { return };
+    // SAFETY: retained at install; released exactly once here.
+    if let Some(t) =
+        unsafe { Retained::from_raw(raw as *mut objc2_foundation::NSTimer) }
+    {
+        t.invalidate();
+    }
+}
+
+thread_local! {
+    /// `--selftest deletepin` answers the pin-delete confirm here instead of a
+    /// real alert: (verdict, seconds of nested event loop to run first).
+    static CONFIRM_STUB: RefCell<Option<(bool, f64)>> = const { RefCell::new(None) };
+}
+
+/// Arm the confirm stub for `--selftest deletepin` (see `confirm_delete`).
+pub(crate) fn stub_confirm_delete(verdict: bool, pump_secs: f64) {
+    CONFIRM_STUB.with(|s| *s.borrow_mut() = Some((verdict, pump_secs)));
+}
+
+/// Keep a nested event loop running for `secs` — the shape of a modal dialog.
+/// A real `NSAlert.runModal` parks here too, so the poll timer (common modes)
+/// fires inside it exactly as it does in the product.
+fn pump_run_loop(secs: f64) {
+    let run_loop = objc2_foundation::NSRunLoop::mainRunLoop();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(secs);
+    while std::time::Instant::now() < deadline {
+        let limit = objc2_foundation::NSDate::dateWithTimeIntervalSinceNow(0.05);
+        // SAFETY: NSDefaultRunLoopMode is a valid mode token for the main loop.
+        let mode: &'static objc2_foundation::NSRunLoopMode =
+            unsafe { objc2_foundation::NSDefaultRunLoopMode };
+        run_loop.runMode_beforeDate(mode, &limit);
     }
 }
 
@@ -566,6 +878,13 @@ pub(crate) fn hand_back_focus_if_current(generation: u64) {
 
 /// The pinned-delete confirm (double-button NSAlert through `withDialog`).
 fn confirm_delete() -> bool {
+    // Self-test path: no real alert, but the same nested event loop. It
+    // deliberately skips `with_dialog` so the test exercises the borrow
+    // discipline rather than the dialog guard.
+    if let Some((verdict, secs)) = CONFIRM_STUB.with(|s| s.borrow_mut().take()) {
+        pump_run_loop(secs);
+        return verdict;
+    }
     with_dialog(|| {
         let mtm = MainThreadMarker::new().expect("main thread");
         let alert = objc2_app_kit::NSAlert::new(mtm);
@@ -580,17 +899,40 @@ fn confirm_delete() -> bool {
 }
 
 /// The pinned-delete confirm + delete flow (`model.delete`).
+///
+/// The confirm runs *before* the model borrow, never inside it: `NSAlert`
+/// parks in a nested event loop, the 0.25 s poll timer fires in that loop and
+/// reloads the cards, and reloading takes the model borrow again. Holding it
+/// across the alert therefore aborted the process the moment a user deleted a
+/// pinned card.
 pub(crate) fn delete_item(item: &ClipItem) {
-    with_model_mut(|m| {
-        m.delete(item, |_| confirm_delete());
-    });
+    if item.pinned && !confirm_delete() {
+        return;
+    }
+    with_model_mut(|m| m.delete(item));
+    // The removed card may have been the highlighted one (`selectAvailableItem`).
+    with_model_mut(|m| m.select_available_item());
 }
 
 /// ⌫ on the selected card (the NSAlert rides along only for pinned cards).
 fn delete_selected() {
-    with_model_mut(|m| {
-        m.delete_selected(|_| confirm_delete());
-    });
+    let Some(item) = with_model_mut(|m| m.selected_item()) else { return };
+    if item.pinned && !confirm_delete() {
+        return;
+    }
+    with_model_mut(|m| m.delete_selected());
+    finish_pending_close();
+}
+
+/// Drain a copy-and-close the model only queued (`model::copy_and_close`).
+/// Call it once the model borrow is released, never from inside it: `hide()`
+/// takes that borrow itself.
+pub(crate) fn finish_pending_close() {
+    let Some(paste) = with_model_mut(|m| m.take_pending_close()) else { return };
+    hide();
+    if paste {
+        paste_into_previous_app();
+    }
 }
 
 // MARK: keyboard table (`ShelfPanelController.handle`)
@@ -636,14 +978,16 @@ pub(crate) fn handle(event: &NSEvent) -> bool {
             }
         }
         if code == VK_ESCAPE {
-            with_model_mut(|m| {
-                m.show_settings = false;
-                m.show_contact = false;
-            });
-            crate::shelf::view::refresh();
+            // Back to the shelf. Only a page opened from the strip closes the
+            // shelf here (see `line_panel::leave_settings`); from the panel ⎋
+            // has always meant "leave the page".
+            crate::shelf::line_panel::leave_settings();
             return true;
         }
         if code == VK_F && cmd {
+            // Turning to the shelf's search means staying in the panel — only
+            // it has a search box — so the strip is not owed a return here.
+            crate::shelf::line_panel::forget_return_to_line();
             with_model_mut(|m| {
                 m.show_settings = false;
                 m.show_contact = false;
@@ -656,6 +1000,11 @@ pub(crate) fn handle(event: &NSEvent) -> bool {
     }
     // Welcome card's two shortcut recorders get every key while capturing.
     if typed_welcome(event) {
+        return true;
+    }
+    // A full-size picture is up: ⎋ closes it and nothing else moves. Done
+    // before the table below so the shelf's own ⎋ (hide) cannot also fire.
+    if event.keyCode() == VK_ESCAPE && crate::shelf::image_viewer::close() {
         return true;
     }
     let consumed = match code {
@@ -674,6 +1023,9 @@ pub(crate) fn handle(event: &NSEvent) -> bool {
                 return false;
             }
             with_model_mut(|m| m.copy_selected());
+            // The model only queued the close; run it now that the borrow is
+            // gone (see `model::copy_and_close`).
+            finish_pending_close();
             true
         }
         VK_LEFT if !typing => {
@@ -697,7 +1049,12 @@ pub(crate) fn handle(event: &NSEvent) -> bool {
             true
         }
         VK_S if cmd => {
-            with_model_mut(|m| m.export_selected());
+            // The save panel is a modal dialog: take the item first, then run
+            // it outside the borrow (same reason as the pin-delete confirm).
+            let item = with_model_mut(|m| m.selected_item());
+            if let Some(it) = item {
+                crate::shelf::exporter::export(&it);
+            }
             true
         }
         VK_DELETE if !typing => {
@@ -714,6 +1071,14 @@ pub(crate) fn handle(event: &NSEvent) -> bool {
         }
         _ => {
             // Just start typing: letters go straight into the search box.
+            // No early `return true` here: every other consumed key falls
+            // through to the refresh below, and this one has to as well. The
+            // refresh is what runs `focus_search_field` — bumping
+            // `focus_search` alone only sets a flag, and the focus jump (plus
+            // the `pending_query` flush it schedules) would wait for the
+            // 0.25 s poll tick. A character typed inside that window reaches
+            // the box first and is then re-appended behind the pending one,
+            // so fast typing came out transposed.
             if !typing && !cmd && !ctrl && !opt {
                 if let Some(chars) = event.characters().map(|s| s.to_string()) {
                     if !chars.is_empty() && chars.chars().all(searchable_scalar) {
@@ -721,11 +1086,16 @@ pub(crate) fn handle(event: &NSEvent) -> bool {
                             m.pending_query = chars;
                             m.focus_search += 1;
                         });
-                        return true;
+                        true
+                    } else {
+                        false
                     }
+                } else {
+                    false
                 }
+            } else {
+                false
             }
-            return false;
         }
     };
     if consumed {
@@ -815,6 +1185,12 @@ fn ql_reload(ql: &QLPreviewPanel) {
 
 /// File to preview for the selected card: the payload itself, or the first
 /// file of a files item (`quickLookURL`).
+///
+/// This takes the model mutably — resolving the selection walks the list
+/// cache, which writes — so *no caller may hold a model borrow when it runs*.
+/// That is the whole contract `toggle_quick_look` had been breaking: the card
+/// actions used to call it from inside a `with_model_mut`, which re-enters the
+/// `RefCell` and aborts the process.
 pub(crate) fn quick_look_url() -> Option<std::path::PathBuf> {
     with_model_mut(|m| {
         let item = m.selected_item()?;
@@ -832,6 +1208,8 @@ pub(crate) fn toggle_quick_look() {
                 let sender: Option<&AnyObject> = None;
                 let _: () = msg_send![&*ql, orderOut: sender];
             }
+            // The foreground is ours again — the strip may come back.
+            crate::shelf::line_panel::external_window_closed();
             return;
         }
     }
@@ -839,12 +1217,21 @@ pub(crate) fn toggle_quick_look() {
         return;
     }
     controller().hold_open.set(true);
+    // Quick Look owns the foreground now: the strip must not climb over it.
+    crate::shelf::line_panel::external_window_opened();
     if let Some(ql) = ql_panel() {
         unsafe {
             let sender: Option<&AnyObject> = None;
             let _: () = msg_send![&*ql, makeKeyAndOrderFront: sender];
         }
     }
+}
+
+/// Test hook: is the Quick Look panel up right now? `--selftest previewvideo`
+/// asks after the same call the live card makes, so a panel that never opened
+/// reads as a failure rather than as an untested path.
+pub(crate) fn debug_quick_look_visible() -> bool {
+    ql_panel().is_some_and(|ql| ql_is_visible(&ql))
 }
 
 /// Selection moved with the preview up: reload (`quickLookSelectionChanged`).
@@ -879,12 +1266,18 @@ define_class!(
     unsafe impl NSObjectProtocol for ShelfPanel {}
 
     impl ShelfPanel {
-        #[unsafe(method(canBecomeKey))]
+        // The ObjC selectors are `canBecomeKeyWindow` / `canBecomeMainWindow`
+        // (the Swift property `canBecomeKey` is only a Swift name). Registering
+        // the Swift spelling overrides nothing, and the stock `NSPanel` answers
+        // NO for a `nonactivatingPanel` — which made every `makeKeyWindow()` a
+        // silent no-op, so the panel never took the keyboard and no click or
+        // keystroke was ever delivered to it.
+        #[unsafe(method(canBecomeKeyWindow))]
         fn can_become_key(&self) -> objc2::runtime::Bool {
             true.into()
         }
 
-        #[unsafe(method(canBecomeMain))]
+        #[unsafe(method(canBecomeMainWindow))]
         fn can_become_main(&self) -> objc2::runtime::Bool {
             false.into()
         }
@@ -913,6 +1306,9 @@ define_class!(
             }
             let c = controller();
             c.hold_open.set(false);
+            // Quick Look gave the foreground back (its own ⎋, another app, or
+            // the shelf taking control again).
+            crate::shelf::line_panel::external_window_closed();
             refocus();
         }
 
@@ -946,8 +1342,25 @@ define_class!(
         /// field cannot swallow ⏎ / ⎋.
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
-            if event.r#type() == objc2_app_kit::NSEventType::KeyDown && handle(event) {
+            let kind = event.r#type();
+            if kind == objc2_app_kit::NSEventType::KeyDown && handle(event) {
                 return;
+            }
+            // Take the keyboard before AppKit runs the click.
+            //
+            // The shelf is a borderless `NonactivatingPanel`, and after a copy
+            // it hands the keyboard back to the previous app
+            // (`hand_back_focus`). From then on the panel is visible but not
+            // key, and the window server gives a first click in such a window
+            // only what it needs to swallow it: `acceptsFirstMouse:` lets the
+            // view see the event, but no field editor is started and no
+            // keystroke follows. That is exactly the report — the search box
+            // looked grey, a click put no caret in it, and typing went to the
+            // app behind. Becoming key here, before the click is dispatched,
+            // is what makes the one click that lands on a text box the click
+            // that focuses it.
+            if kind == objc2_app_kit::NSEventType::LeftMouseDown && !self.isKeyWindow() {
+                self.makeKeyWindow();
             }
             unsafe {
                 let _: () = msg_send![super(self), sendEvent: event];

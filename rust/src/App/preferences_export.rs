@@ -69,8 +69,9 @@ fn close_open_dir() {
 /// open() the item"), which is exactly the build that needs no scope at all.
 /// Both cases must still land a usable memory, so the plain bookmark is the
 /// fallback: it round-trips a path just as well when there is no sandbox to
-/// cross.
-fn export_bookmark_blob(url: &NSURL) -> Option<Retained<NSData>> {
+/// cross. Shared with the panel background, which remembers a file the same
+/// way.
+pub(crate) fn file_bookmark_blob(url: &NSURL) -> Option<Retained<NSData>> {
     url.bookmarkDataWithOptions_includingResourceValuesForKeys_relativeToURL_error(
         NSURLBookmarkCreationOptions::WithSecurityScope,
         None,
@@ -90,6 +91,17 @@ fn export_bookmark_blob(url: &NSURL) -> Option<Retained<NSData>> {
 /// Resolve a stored blob back to a URL, preferring the security-scoped reading
 /// and falling back to the plain one. The returned URL has not had its scope
 /// started — the caller decides whether to.
+///
+/// Start the scope for a security-scoped blob (or the read fails under the
+/// sandbox); a plain blob, and the direct build, need none. Nothing closes it:
+/// a user-picked file stays reachable for the rest of the launch, which is the
+/// same lifetime the export folder keeps.
+pub(crate) fn resolve_file_blob(blob: &NSData) -> Option<Retained<NSURL>> {
+    let url = resolve_blob_to_url(blob)?;
+    unsafe { url.startAccessingSecurityScopedResource() };
+    Some(url)
+}
+
 fn resolve_blob_to_url(blob: &NSData) -> Option<Retained<NSURL>> {
     let scoped = NSURLBookmarkResolutionOptions::WithSecurityScope
         | NSURLBookmarkResolutionOptions::WithoutImplicitStartAccessing
@@ -125,7 +137,7 @@ impl Preferences {
     /// Replaces the folder remembered before.
     pub fn set_custom_export_dir(&self, url: &NSURL) {
         close_open_dir();
-        match export_bookmark_blob(url) {
+        match file_bookmark_blob(url) {
             Some(blob) => unsafe {
                 // SAFETY: `blob` is an NSData and UserDefaults holds any object.
                 self.defaults().setObject_forKey(

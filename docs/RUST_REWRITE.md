@@ -17,6 +17,40 @@
 
 ---
 
+## 0. 哪一份是最新的（先看这里）
+
+**唯一在用的项目 = Rust 管线，唯一在用的构建 = `build/PasteJar.app`。**
+
+| 你想找的东西 | 在哪 | 算什么 |
+| --- | --- | --- |
+| 现在真正在跑、要测的 app | `rust/` + `./build-rs.sh` → **`build/PasteJar.app`** | 唯一现行实现 |
+| 旧 Swift 版 | `Sources/Pastory/` | **冻结归档 / 行为基准**（1.0.6 起不再改，不产出可发行档） |
+| bundle id | `com.cici.snipclip` | 两版共用，**不可改** |
+
+不要再从 `swift build` 或 `Sources/Pastory/` 起 app，也不要看 `build/` 里其他同名的 `.app` 目录——那些是历史副本。认二进制看构建指纹，不看目录时间：
+
+- `设置 › 版本更新` 里有一行 **「构建 …」**，形如 `构建 0ae8f35-dirty · 2026-10-14 17:31`（`rust/build.rs` 把 git 短哈希 + `-dirty` + 构建时间（分钟精度）烤进 `PASTORY_BUILD_STAMP`）。念出来就能确定谁跑的是哪份。
+- 命令行：`stat -f '%Sm %N' build/PasteJar.app/Contents/MacOS/PasteJar`。
+- `Cargo.toml` 的版本号与 `Info.plist` 的 `CFBundleShortVersionString` 每次重建都一样，**认不出二进制**——所以才有上面那行构建指纹。
+
+替换决策的依据见 §6 M7。本机是 ad-hoc 签名，重建后屏幕录制 / 辅助功能可能被当成新应用，没反应就去系统设置里重勾一次。
+
+### 0.1 2026-10-14 修掉的用户可见缺陷
+
+用户实测报的 5 条里，以下已在 Rust 管线上修好并由自测钉住：
+
+| 现象 | 根因 | 验证 |
+| --- | --- | --- |
+| 背景图看不出效果 | 地面绘制在 `ShelfRootView::drawRect:`，被 `NSVisualEffectView` 材质子视图整个盖住 | `--selftest background` / `liveshot` |
+| 非原生皮肤「背景透明」 | 材质 `state` 未置 `.active`，非原生皮透出桌面 | `--selftest skinlive`（用户 2026-10-14 复测确认消失） |
+| 搜索框呈灰度、点不进、打不了字 | 未聚焦 `NSTextField` 无 field editor；面板 `visible` 但非 key 时第一次点击只抬窗 | `--selftest searchtype` / `searchlive` / `searchpanel`（点进去后 `firstResponder=NSTextView`） |
+| 卡片加不了标题 | 与搜索框同源（non-key 窗口拿不到 field editor） | 标题链在 `--selftest` 中走通（`CardTitleField`） |
+| 识别文字点了就崩 / 图片卡没有 OCR 文本 | ① `Annotate/ocr.rs` 要求 `MainThreadMarker` 而调用在 worker 线程 → panic；② 在 `NSWindow` 上发了不存在的 selector `-makeKey`（应为 `-makeKeyWindow`）→ ObjC 异常直接 abort | `--selftest ocrlive`（后台 pass + 面板两条 worker 路径，0.3 s / 0.1 s 返回文字） |
+
+第 5 条还牵出一处失实描述：§M4 原写「标注完成 = 复制+入库+OCR 后台」，实际上 store 侧只有一个 `// M4:` 占位注释、`set_ocr` 没有任何调用者，图片卡的 `ocr_text` 永远是 `None`（搜索的 ocr 字段恒空、右键的「复制识别出的文字」永不出现）。现在由 `ClipStore::insert_image` → `background_ocr` 真正接上，M4 那行已按下文更正。
+
+---
+
 ## 1. 背景与动机
 
 ### 1.1 现状盘点
@@ -341,6 +375,34 @@ Rust main 对齐同一顺序：
 10. 首启 `!didWelcome` → 面板自动打开 + 欢迎卡（`didWelcome` 置位）；
 11. 菜单随语言变化重建（`languageChanged`）。
 
+### 5.16 布局轴与第二形态「晾衣绳」（2026-10-15）
+
+货架从这一版起有**两条正交的观感轴**：
+
+| 轴 | 管什么 | 中枢 | 数量 | 切换动作 |
+| --- | --- | --- | --- | --- |
+| 皮肤 skin | 配色 / 圆角 / 阴影 / 字体 / 材质 | `App/theme_skin.rs` | 9 | `panel::retheme()`（**刻意保持 frame**） |
+| 形态 layout | 整体布局与交互契约 | `App/layout_skin.rs` | 2 | `panel::relayout()`（**允许改 frame**） |
+
+两条轴分开是有意的取舍：`retheme` 保持窗口不动，而切形态必须把窗口搬走（底部抽屉 ↔ 顶部横条），共用一个入口会造出「形态切了窗口没动」的假成功。`Choice::Layout(id)` → `layout_skin::select/store` → `queue_panel_command(PanelCommand::Relayout)` → `view::apply_panel_commands` → `panel::relayout()`。
+
+**面板形态**（默认，`id = "panel"`）：底部抽屉，键盘与搜索齐全，行为完全照旧——`panel.rs` 的这一支是原路径，一行未改。
+
+**晾衣绳形态**（`id = "line"`，参照 https://github.com/alejandrobujan/tendedero）：整屏宽的顶部横条，一根绳挂一排玻璃框照片，夹子夹着、随风摆动。它与面板的交互契约**互斥**（面板是键盘驱动，晾衣绳是永不抢焦点 + 点击穿透 + 悬停呼出），所以不是把新观感塞进旧面板，而是各自一套完整契约：
+
+- **窗口**：`line_panel.rs` 的 `LinePanel` —— `Borderless | NonactivatingPanel`、`level = .floating`(3)（低于面板的 `.statusBar` 25）、`canBecomeKeyWindow` / `canBecomeMainWindow` 均 false、collection behavior `CanJoinAllSpaces | FullScreenAuxiliary | Stationary`；顶部贴菜单栏下沿（`visibleFrame.maxY − strip_height`）、整屏宽。
+- **交互**：放弃键盘与搜索，改鼠标手势——单击复制、双击粘贴到前台应用、右键菜单、拖出（`NSDraggingSource`，copy 操作）。右键菜单与面板形态共用 `Shelf/item_actions.rs` 这一层（复制 / 复制并关闭 / 粘贴到前台应用 / 编辑 / 重命名 / Pin / 保存到本地 / 在 Finder 中显示 / 删除 / 贴到桌面 / 查看 / 还原为图片 / 复制识别出的文字 / 打开设置 / 切回面板），两种形态不会再各写一份而慢慢长歪；卡上还有 Pin 推钉与标题行状态。
+- **自动呼出 / 收起**（`presence_check`，与摆动共用那个 30 Hz 时钟）：停靠时每 4 帧（`IDLE_DIVISOR`）看一眼指针是否进菜单栏热区（`visibleFrame.maxY − 2pt`，`HOT_ZONE_BAND`），进了就 `show()`（露 0.25 s / 收 0.5 s）；露出后指针既不在条上、也不在热区，且过了宽限就 `hide()`。手动 ⇧⌘V 呼出后给 1.5 s 宽限（`MANUAL_GRACE_SECS`），免得指针还没移到条上就被收走。这一条由 `--selftest linehover` 单独钉住（它先停掉真时钟、再用手工指针跑那个决策，不受真实鼠标位置影响）。
+- **点击穿透**（Tendedero 机制核心）：窗口默认 `ignoresMouseEvents = true`；30 Hz `NSTimer` 把指针换算到条内坐标（翻转 y），落在某张照片的 frame 矩形（外扩 4pt）内就把 `ignoresMouseEvents` 翻 false，离开翻回。**绘制与命中用同一个宽度**（行宽 = 窗口内容宽）——这一条是 `--selftest linehit` 第一次跑就抓到的真缺陷：文档视图宽度曾取行宽而窗口是全屏宽，短行贴左不居中，命中矩形与实际绘制差数百点，hover 永不匹配、翻转永不触发。
+- **手势分叉与交互门**：按下后往条外走（纵向越过 `DRAG_LEAVE` 24pt）＝拖出一张照片到别的应用；仍在条带内横拉（过 `PAN_START` 6pt）＝拖动整行、露出更多照片（同一映射也给了滚轮与触控板：`scrollWheel` 与 pan 都走纯函数 `line_view::scrolled_origin`，先滚后拍再夹取）；原地松手＝单击复制 / 双击粘贴。判定是纯函数 `line_view::classify_press(dx, y, height)`（离开条带优先于横拉）。**按住期间必须把时钟挡开**：`mouseDown:` 调 `interaction_started()` 置 `interacting`，`presence_check` / `hover_check_at` 一见面就早退，松手 `mouseUp:` 才算 `interaction_ended()`；拖出另有 `dragging` 门只管拖拽态。没有这道门，30 Hz 时钟会在拖动中途把条收起或翻回穿透，手势的 `mouse-up` 就落到别的窗口上了——这正是「拖动效果没有」的根因。`--selftest linedrag` 用真门（不是直接调 `debug_hover_at`）单独钉住它，`--selftest linewheel` 钉住行宽与滚动的映射（含一次临时加宽文档视图的实拖探针）。
+- **显示设置**（设置 › 外观 › 晾衣绳，仅晾衣绳形态下生效）：卡片大小 100 / 120 / 150%（`lineCardScale`）、卡片间距 窄 / 标准 / 宽（`lineCardGap` = 24 / 48 / 80）、自动呼出（`lineAutoReveal`，关掉只按 ⇧⌘V 或条内右键呼出）、摆动（`lineSwing`，关掉是静止的一排）。四行都存在 `Preferences`，改一下即时生效（`line_panel::refresh_metrics()` 重置度量缓存后按当前可见态重建 / 重排）。`line_card::metrics` 对尺寸 / 间距台阶做白名单校验，偏好里存了怪值也只落回默认。
+- **绳与卡**：`line_view.rs` 的 `rope_y(x, w) = ROPE_TOP + 4·sag·f·(1−f)`（`sag = min(30, w·0.018)`），一条二次贝塞尔穿过中点，三遍描边（阴影 / 芯 / 高光）+ 两端渐变淡出；`layout()` 够宽居中、否则 24pt 起排。`line_card.rs` 的 150pt 玻璃框（半透明 `theme::surface()` 填 + 顶部 sheen + 发丝边）、9×26 金属胶囊夹子（`NSGradient`）、缩略图、video 播放角标、已复制勾。**玻璃有意不用 `NSVisualEffectView` 子视图**：离屏渲染合成不了材质，view-backed 玻璃在每张自测图里都会是透明的——活窗口另挂材质背板（同面板形态 `theme::panel_material_alpha` 的拆分）。非图片卡（文本 / 链接 / 文件）在无缩略图的分支里画类型图标（`text.alignleft` / `link` / `folder`）+ 一行截断预览，否则整排是空白灰井。
+- **摆动**：`App/motion.rs` 是纯函数动画基建——`Spring`（SwiftUI `interpolatingSpring(stiffness:damping:)` 的欠阻尼闭式解）、`attach_spring()`（挂上 16°、`46 / 2.6`）、`wind_angle(seed, t)`（每张卡自己的风 1.6–3.4°、延迟 0–0.35 s、周期 2.2–3.6 s）、`card_angle(seed, t) = 挂上弹簧 + 风`。**没有用 `CASpringAnimation`**：每张卡有各自随机风与各自延迟，逐张需要独立动画，layer 动画要一层一张卡、还要引 Core Animation 依赖，而这是两行闭式解；纯函数还能让自测冻结任意一帧。30 Hz 驱动**在晾衣绳形态存活期间一直运行**——停靠时降频为每 4 帧一次，专为热区；`panel::relayout()` 从 line 切回 panel 时调 `line_panel::suspend()` 停掉它，面板形态零开销。
+- **几何分工**：`panel::show/hide/toggle/frame_on_screen/is_visible/prewarm/relayout` 开头一律 `if layout_skin::is_line() { … }` 分派到 `line_panel`；便签、Quick Look、对话框降级这些跟着面板几何走的东西因此仍拿到正确矩形（`--selftest note` 回归覆盖）。
+- **首启 / 老用户迁移**：`layout_skin::stored_id()` 未知或缺失键一律落回 `"panel"`（单测钉住），新用户和升级用户都照旧看到面板。
+
+验收：`--selftest line`（绳与行离屏渲染）、`--selftest linewind`（挂上 16° → 回过 → 落定、两张卡不同风）、`--selftest linehit`（照片矩形内落点让窗口可点、行外仍穿透）、`--selftest linehover`（指针到菜单栏呼出、离开收起）；`--selftest {shelf,settings,note,skinlive}` 无回归；中英各一张图与 Tenedero hero 并排目视。真机观感（悬停呼出、摆动、拖出）按本项目惯例由用户肉眼确认。
+
 ---
 
 ## 6. 里程碑
@@ -374,8 +436,12 @@ spike：CGEvent post(tap:)、objc2-app-kit 最小 NSPanel、字体注册 三件�
 
 ### M4 ✔ 标注 + OCR
 
-交付：7 工具 + SplitMix64 两遍手绘渲染、文字框（自动宽/右缘换行/committedBoxSize/TextKit 共用排版）、undo 单级、调色盘、OCRPanel（三语言、排序 maxY desc → minX）、标注完成 = 复制+入库+OCR 后台。
-验收：`annotate`（含 `.flat.png` 合成结果）、`annotationtext`、`ocr`、`ocrpanel` 通过。Verifier path：有屏录授权的机器上 ⌥⌘S 画布/工具条/OCR 真机手测（与 M3 共享——M7 一起走完）。
+交付：7 工具 + SplitMix64 两遍手绘渲染、文字框（自动宽/右缘换行/committedBoxSize/TextKit 共用排版）、undo 单级、调色盘、OCRPanel（三语言、排序 maxY desc → minX）、标注完成 = 复制+入库。
+验收：`annotate`（含 `.flat.png` 合成结果）、`annotationtext`、`ocr`、`ocrpanel`、`ocrlive` 通过。Verifier path：有屏录授权的机器上 ⌥⌘S 画布/工具条/OCR 真机手测（与 M3 共享——M7 一起走完）。
+
+> **更正（2026-10-14）**：本节原写「标注完成 = 复制+入库+**OCR 后台**」，与当时代码不符——`Clipboard/store.rs` 里只有一个 `// M4:` 占位注释，`set_ocr` 没有任何调用者，所以图片卡的 `ocr_text` 永远是 `None`：搜索的 ocr 字段恒空，右键的「复制识别出的文字」永不出现。同时 `Annotate/ocr.rs` 要求 `MainThreadMarker`，而 `ocr_panel.rs` 在 `std::thread::spawn` 里调它 → 每次真实识别都 panic，面板卡在「识别中…」；另外 `ocr_panel.rs` 与 `Capture/selection_overlay.rs` 两处在 `NSWindow` 上发了不存在的 selector `-makeKey`（应为 `-makeKeyWindow`），第一次点「识别文字」和第一次 ⌥⌘S 框选都会 abort 进程。
+>
+> 现已修复：`ClipStore::insert_image` / `update_image` 入库后调 `background_ocr`（对齐 Swift 的 `Task.detached` 基准，连带 `autoreleasepool`），`set_ocr` 用 `content_hash` 复核避免覆盖更新的图；`ocr.rs` 去掉主线程要求（Vision 本身线程安全）；两处 selector 改为 `-makeKeyWindow`。新增 `--selftest ocrlive` 专门覆盖这条只有 worker 线程才走的路径（`ocr` 在主线程内联跑、`ocrpanel` 只渲染 `debugView`，两个都绕过了它）。验收：`--selftest ocrlive` 通过（后台 pass 0.3 s、面板 0.1 s 返回文字）。
 完成记录（2026-09-26，全套自测绿；真机交互随 M3 一并走）：`Annotate/annotation.rs`（7 工具+单键、StrokeSize 四向量、Hit/handles/set_handle 全套、调色盘七色+isLight、Seed=fresh 定预览=导出契约）、`Annotate/renderer.rs`（两遍手绘：flatness 0.3 打平+长段 6pt 加密+低频频噪，闭形 f1∈2..3/f2∈5..7、开形 f1∈1..2/f2∈3..5+taper、SplitMix64 与 theme 同 BitExact；smooth quadratic 中点过弯；pixelate 中档插值整块平均再 0 档放大；selection chrome：双笔里线+纸蓝破折圆角框、纸面小圆 grip、墨色 ✕ 芯片）、`Annotate/text_layout.rs` + `text_view.rs`（NSTextStorage+NSLayoutManager+NSTextContainer 编辑/导出共用排版，usedRect+extraLineFragment 补高、零线距内边、输入文字占位、IME markedText 让行 Return）、`Annotate/annotate_view.rs`（flipped 画布全交互：select/move/handle 拖、双击完成、recordMode 隐藏标注+⌘Z/删除失效、文字框完整开采流：autowidth 冲右缘换行、committedBoxSize 重开保宽、⏎/⌘⏎/点框外/拖动手柄 commit、文字框四角+边中点 8 个 resize grip）、`Annotate/toolbar.rs`（7 码绘 18pt 模板图标 + 识别文字 + ↶ + ✕ + ✓ 蓝点；SubBar 纸托指针、马赛克无色组、文字 小/中/大、色检 ✓；固定几何复刻 fittingSize，无 StackView/AutoLayout）、`Annotate/ocr.rs`（VNRecognizeTextRequest .accurate + zh-Hans/zh-Hant/en-US + 语言纠正、排序 maxY desc → minX）、`Annotate/ocr_panel.rs`（floating above-picker 面板：GridBackdrop 棕台 + 剧本体标题 + 纸卷文字区 + 状态小字 + 复制文字/关闭、token 代系与后台 OCR 任务取代替换）、CaptureCoordinator 挂 AnnotateDelegate（showAnnotator、cropProvider 实时重裁、⏎/双击完成=annotateDidFinish（带 OCR 文本入库）、annotateRequestOCR、moveRegion/replaceImage、recordMode 互切与 unbindPickerHooks、OCRPanel.sinkBelowPicker + token 新代；开始录制仍是 M5 beep 锚点）。验收：`annotate` 出 idle/selected/arrow/flat 四图与 Swift 形态同手印、`ocr` 样图三语一次命中、「annotationtext」Swift 同款 33 断言全过（合成 NSEvent/msg_send 驱动真实画布：open/typing 自宽/编辑导出同版/IME/⌘⏎/换行/点外确认/角删、「ocrpanel」渲染、回归 l10n(97)/ingest/retention/tombstone/heic/writer/pbfiles/search/shelf/shelfsearch/statusclick 全绿，cargo test 15、cargo build 零警告、build-rs.sh release 全量复跑过。工程要点：① objc2-vision 0.3.2 的 `performRequests_error` 直接返回 `Result<(), Retained<NSError>>`（error out 参数语义已由 crate 封装；唯一手型适配是 `NSArray<VNRecognizeTextRequest>` 需 cast_unchecked 成 `NSArray<VNRequest>`）；② informal 协议方法（NSTextViewDelegate 二件套 / QL 同款手法）不挂 unsafe impl Protocol，按 selector 直接注册进 define_class（挂 unsafe impl NSTextViewDelegate 会踩 define_class 的协议方法校验失败——textDidChange 在父协议 NSTextDelegate 上）；③ objc2::class!(Name) 只对框架类有效，自研 define_class 类一律 `ClassType::class()`；④ msg_send 裸发 NSEvent mouseDown:/mouseDragged:/mouseUp:/keyDown: 驱动画布与真事件同路（annotationtext 全量复跑依赖）；⑤ build-rs.sh 的 dev 档继续经 APP_FOLDER/APP_TITLE 并存（Pastory Rust），bundle id 不变。真机手测说明：画布/工具条/OCR/ready bar 的真机交互（含多屏与授权流）随 M3 授权后一并走。
 
 ### M5 ✔ 录屏 + GIF
@@ -398,7 +464,7 @@ spike：CGEvent post(tap:)、objc2-app-kit 最小 NSPanel、字体注册 三件�
 
 **欢迎与导览**：`Shelf/welcome_card.rs`（首启 0.6 s 后自动展开面板 + 欢迎卡 + 双 shortcut recorder 行 + 6-todo checklist）+ `Shelf/how_to_card.rs`（howToVersion=2、loadFailed/lastSaveFailed guard + didSeedHowTo → version 1 兼容 + `PASTORY_HOWTO` 自控 seed 进 selftest_m2）。
 
-**联系页**：`Shelf/contact_pane.rs` 四张纸卡（微信 WeChatGroup.png / GitHub ↗ / X ↗ / 咖啡 Coffee.png）。
+**联系页**：`Shelf/contact_pane.rs` 四张纸卡（微信群 WeChatGroup.png / 个人微信 WeChatPersonal.png / X ↗ / 咖啡 Coffee.png；直发版不含开源地址一格）。
 
 **编辑器 / 导出**：`Shelf/text_editor.rs`（620×460 纸卡面 + Caveat 22 单线 placeholder「+ 加个标题」+ 7pt leading + ⌘⏎ 保存并复制）+ `Shelf/image_editor.rs`（纸背 mat 画布 + toolbar「保存」 doneTitle + annotate OCR 链）+ `Shelf/exporter.rs`（图片永远无损 PNG——HEIC 解码回包、tmp 兄弟文件 + replaceItemAt 原子替换、~/Downloads 默认且偏好可改自建目录、Finder activateFileViewerSelecting）。
 
@@ -444,6 +510,18 @@ M7 = 序尾，全验收绿后不再新增工作。从 1.0.6 起仓库的唯一�
 2. **设置页纵向滚动补齐**：Swift SettingsPane 是 ScrollView（482pt 高放不下两列全高 ~690pt），Rust 原来无滚动、底部 section（系统/清理下半）被裁且不可达。修法：draw 里 y 累加器整体 `−scroll`（`header 62pt` 以下 `addClip`），hotspots 天然取平移后坐标、超裁剪带的热点 `retain` 掉，`scrollWheel` 加页滚（小时轮优先、页滚 clamp 到 `content_h − 可视高`，`content_h` 在 draw 尾测量回写）。滚轮/触控板精确 delta 直接平滑滚动。
 3. **QR 按原生点尺寸爆格**：`card::draw_centered` 按 `img.size()` 点画、只在 rect 内居中不缩放，WeChatGroup.png / Coffee.png 原生 ~500+pt → 联系方式两张 QR 卡炸出卡片铺满半屏（Swift 自测 1600×560 硬编码帧下 SwiftUI 版也炸、两侧「一致」又成假绿）。修法：contact_pane 内按 Swift 的 `aspectFit frame 120×120` 语义 fit 缩放后走 `draw_image`；`draw_centered` 语义不动（卡片缩略图调用方依赖原样）。Swift contact 自测帧（1600×560 硬编码、不可 env）不代表真机，Rust contact 改以 Swift 源码设计（4×230 定宽、16 间距、左对齐 x=186 起）+ 真机宽渲染核对（abs 186/432/678/924）。
 
+### M8 ✔ 布局轴 + 第二形态「晾衣绳」（2026-10-15）
+
+交付：`App/layout_skin.rs`（布局轴表 + 偏好键 `layout` + 解析落底）、`App/motion.rs`（纯函数弹簧与风）、`Shelf/line_panel.rs`（顶部横条窗口 / **自动呼出与收起** / 穿透翻转 / 鼠标手势 / 拖出）、`Shelf/line_view.rs`（绳与行布局）、`Shelf/line_card.rs`（玻璃框 + 夹子 + 缩略图 + 非图片卡的类型图标与一行预览）、`App/selftest_m8.rs`（`line` / `linewind` / `linehit` / `linehover` / `linedrag` / `linewheel`）、设置页「形态」区块（两张预览卡）与「晾衣绳」显示分组、`Shelf/item_actions.rs`（两形态共用的动作层）、`PanelCommand::Relayout` 与 `panel` 侧的双形态分派。设计见 §5.16。
+
+验收（全绿）：`--selftest line` 离屏渲染（1600×184，中英各一张）、`linewind`（挂上 16.00° → 中段 −7.70° → 落定 −1.76°，两张卡的风不同）、`linehit`（6 张照片中心全部 `clickable=true`、条右缘外 `falls through=true`）、`linehover`（指针到菜单栏 → `revealed=true`、离开 → `retracted=true`）、`linedrag`（拖拽中不收条、不翻穿透，松手后恢复穿透并可再收起）、`linewheel`（行宽 == `row_width(n, clip_w)`、滚轮前进 / 回退 / 夹取、实拖探针、`classify_press` 三条规则）；`--selftest {l10n,shelf,settings,note,skinlive}` 无回归（l10n 286 条无重键；skinlive 六套皮换肤 frame 不动）；`cargo test` 29 项过（新增 `motion` 4 项 + `layout_skin` 2 项）；`cargo check --all-targets` 与 `cargo build` 零警告；`./build-rs.sh` 通过（→ `build/PasteJar.app`）。
+
+过程中被自测抓到的两个真缺陷（都是「看着对、量了才知错」那类）：① **`linehit` 一次不过**——文档视图宽度曾取行宽（`row_width(n, 0.0)` = 1068pt）而窗口是全屏宽，短行贴左不居中，`line_hit_rects` 却按窗口宽算，命中矩形与实际绘制差数百点，hover 永不匹配、穿透翻转永不触发；修成「一个宽度同时管绘制与命中」。② **卡片底部被窗口裁掉**——`content_height()` 只算 `ROPE_TOP`，没算绳的 sag，最中间那张卡挂在绳的最低点，框的下缘被切；改成按最深的 sag 算高（修后最下墨点 169 / 184，留 14pt 余量）。
+
+一处**方案与代码的落差，后补齐**：第一版只做了「穿透翻转 + 手动 ⇧⌘V」，方案里写的「悬停菜单栏呼出、指针离开收起」没落地（`hover_check` 当时只翻穿透，函数表里没有任何 auto_reveal / auto_hide）。补齐后：停靠时那个 30 Hz 时钟降为每 4 帧看一眼菜单栏热区，进热区就 ``show()``、指针离开条且不在热区就 ``hide()``；`panel::relayout()` 从 line 切回 panel 时调 `line_panel::suspend()` 停表，面板形态不背这个开销。`--selftest linehover` 把这条决策单独钉住（它先停真时钟再用手工指针跑，不受真实鼠标位置影响），`linehit` 则先 `debug_freeze_auto()` 免得自动收起把它脚下的条收走。
+
+一段记录在案的有意取舍：方案里写摆动可以用 `CASpringAnimation`，实现时改成自写 `Spring`（§5.16 摆动条）——每张卡各有随机风与延迟，layer 方案要一层一卡 + 引 Core Animation 依赖，而欠阻尼闭式解只有两行，且纯函数让自测能冻结任意帧。`objc2-quartz-core` 因此未被新的代码路径用到（仍在依赖里，被别处使用），红线「无第三方 UI 框架」不受影响。
+
 ---
 
 ## 7. 测试与验收 —— `--selftest` 移植表
@@ -468,12 +546,19 @@ M7 = 序尾，全验收绿后不再新增工作。从 1.0.6 起仓库的唯一�
 | annotate | 画布+工具条渲染，另存 `.flat.png` 合成结果 | M4 |
 | annotationtext | 文字框缩放/换行/输入法/编辑导出排版一致 | M4 |
 | ocr | 样图三语言识别 | M4 |
-| ocrpanel | 识别文字面板渲染 | M4 |
+| ocrpanel | 识别文字面板渲染（只渲染 `debugView`，不跑 worker 线程） | M4 |
+| ocrlive | 两条只有 worker 线程才走的 OCR 路径：图片入库后的后台识别、面板 `show()` 的 spawn+回跳 | M4 |
 | gif | GIF 编码预算与降级 | M5 |
 | writer(gif) | GIF 上板 | M5 |
 | preview | 录屏预览窗渲染 | M5 |
 | settings / contact / welcome | 三页渲染（PASTORY_HEIGHT 试小屏） | M6 |
 | note | 桌面便签渲染 | M6 |
+| line | 晾衣绳形态：绳与一排行卡离屏渲染（不需窗口服务） | M8 |
+| linewind | 晾衣绳摆动：挂上 16° → 回过 → 落定，两张卡不同风 | M8 |
+| linehit | 晾衣绳点击穿透：照片矩形内落点让窗口可点，行外仍穿透 | M8 |
+| linehover | 晾衣绳自动呼出/收起：指针到菜单栏 → 露出，离开 → 收起 | M8 |
+| linedrag | 晾衣绳拖拽门禁：拖拽/行拖动期间不收条、不翻穿透，松手后恢复 | M8 |
+| linewheel | 晾衣绳横向滚动：滚轮与行拖动同一映射，行宽与布局一致 | M8 |
 | editors | 文本/图片编辑窗布局快照 | M6 |
 | import <db> | 外来 SQLite 导入（精确/启发式/Paste） | M6 |
 | updatewin | 更新进度窗渲染 | M6 |

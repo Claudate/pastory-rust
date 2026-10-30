@@ -191,6 +191,12 @@ pub struct ShelfModel {
     /// `initialWarmup`: the launch-time cache warmer, cancelled by the first
     /// view-owned search.
     warmup: Option<SearchJob>,
+    /// The search the UI currently has in flight, with the request it was
+    /// started for. SwiftUI cancelled and restarted `updateSearch` on its own;
+    /// here the poll tick drives it through `service_search`, which needs to
+    /// tell "still looking for exactly this query" apart from "the query moved
+    /// on" — restarting either one is what the port was missing.
+    job: Option<(SearchRequest, SearchJob)>,
     /// `lastCloseAt`: the copy-and-close 0.6 s re-entry guard.
     last_close_at: f64,
     /// `langTick`: bumped when the language changes; the view rebuilds.
@@ -198,6 +204,10 @@ pub struct ShelfModel {
     /// `pendingHandBack`: generation of the scheduled keyboard hand-back; a
     /// newer copy (or copy-and-close) retires the older one by bumping this.
     pending_hand_back: u64,
+    /// A copy-and-close queued by `copy_and_close`; the UI drains it once the
+    /// model borrow has been released (`panel::finish_pending_close`).
+    /// `hide()` takes the model itself, so it can never run inside it.
+    pending_close: Option<bool>,
 }
 
 impl ShelfModel {
@@ -228,8 +238,10 @@ impl ShelfModel {
             completions: Arc::new(Mutex::new(VecDeque::new())),
             notify: None,
             warmup: None,
+            job: None,
             last_close_at: 0.0,
             pending_hand_back: 0,
+            pending_close: None,
             lang_tick: 0,
         }
     }
@@ -446,12 +458,13 @@ impl ShelfModel {
         let notify = self.notify.clone();
         let request = self.search_request();
         let handle = std::thread::spawn(move || {
-            // Swift reads `store.items` after the 80 ms debounce; here the
-            // list is captured up front — a store write mid-flight bumps the
-            // version and the publish guard rejects the stale outcome.
-            if !query.is_empty() {
-                std::thread::sleep(std::time::Duration::from_millis(80));
-            }
+            // The list is captured up front — a store write mid-flight bumps
+            // the version and the publish guard rejects the stale outcome.
+            // Swift's 80 ms typing debounce is deliberately not repeated here:
+            // the UI starts a search only from `service_search`, after the
+            // query has held still for a poll tick, and a worker parked in a
+            // sleep cannot be cancelled until that sleep runs out — which it
+            // would spend blocking the main thread that dropped the job.
             let outcome = index
                 .search(&query, &items, &directory, &thread_cancel)
                 .and_then(|ids| {
@@ -524,6 +537,26 @@ impl ShelfModel {
         self.spawn(request.normalized_query.clone(), true)
     }
 
+    /// The poll tick's half of `updateSearch` — the trigger this port never
+    /// had. SwiftUI re-ran the search whenever `searchRequest` changed; the
+    /// hand-written AppKit panel has no such hook, so the 0.25 s refresh (and
+    /// the notify callback) calls this instead. It runs on the UI side, never
+    /// from a keystroke: starting a search mid-typing would only have the next
+    /// character cancel it, and dropping that job joins its thread.
+    /// `drain_completions` runs first, so a search that already landed is
+    /// published instead of being started over.
+    pub fn service_search(&mut self) {
+        let request = self.search_request();
+        if self.search_result.as_ref().map(|r| &r.request) == Some(&request) {
+            return;
+        }
+        if self.job.as_ref().map(|(r, _)| r) == Some(&request) {
+            return; // in flight; the next tick publishes it
+        }
+        let job = self.begin_search();
+        self.job = Some((request, job));
+    }
+
     /// Main-queue side of `updateSearch`: publish finished jobs whose
     /// request is still current; a cancelled job's outcome is dropped (a
     /// newer query owns the result — never publish the obsolete one).
@@ -545,7 +578,7 @@ impl ShelfModel {
 
     // MARK: Selection
 
-    fn select_available_item(&mut self) {
+    pub(crate) fn select_available_item(&mut self) {
         let list = self.items();
         if !list.iter().any(|it| Some(&it.id) == self.selected_id.as_ref()) {
             self.put_selected(list.first().map(|it| it.id.clone()));
@@ -594,6 +627,7 @@ impl ShelfModel {
     /// `reset()` — the shelf opening state.
     pub fn reset(&mut self) {
         self.set_query(String::new());
+        self.job = None;
         self.show_settings = false;
         self.show_contact = false;
         self.renaming_id = None;
@@ -665,18 +699,24 @@ impl ShelfModel {
     /// ⏎ / double-click: copy, close, and (with Accessibility) paste into
     /// the app you came from (`copyAndClose`). The 0.6 s guard stands: the
     /// shelf is already on its way out.
+    ///
+    /// The close itself is only queued: `hide()` takes the model borrow of its
+    /// own, so it must run after this borrow is released —
+    /// `panel::finish_pending_close` drains the flag at every call site.
     pub fn copy_and_close(&mut self, item: &ClipItem, paste: bool) {
         let t = now();
         if t - self.last_close_at <= 0.6 {
             return;
         }
         self.last_close_at = t;
-        self.copy(item);
+        self.pending_close = Some(paste);
         self.cancel_pending_hand_back();
-        crate::shelf::panel::hide();
-        if paste {
-            crate::shelf::panel::paste_into_previous_app();
-        }
+        self.copy(item);
+    }
+
+    /// Hand the queued copy-and-close to the UI layer; `Some(paste)` once.
+    pub fn take_pending_close(&mut self) -> Option<bool> {
+        self.pending_close.take()
     }
 
     /// Return: copy and close; paste too only when the setting allows it and
@@ -687,19 +727,14 @@ impl ShelfModel {
         self.copy_and_close(&s, paste);
     }
 
-    /// ␣ (`previewSelected`) — the Quick Look panel itself is slice C.
-    pub fn preview_selected(&self) {
-        crate::shelf::panel::toggle_quick_look();
-    }
-
-    /// Text → our editor window; image → the annotation editor
-    /// (`ShelfPanelController.showEditor`).
-    pub fn edit(&self, item: &ClipItem) {
-        match item.kind {
-            ClipKind::Text | ClipKind::Url => crate::shelf::text_editor::TextEditorWindow::open(item),
-            ClipKind::Image => crate::shelf::image_editor::ImageEditorWindow::open(item),
-            _ => self.preview_selected(),
-        }
+    /// Highlight a card the way the action strip does before it acts.
+    ///
+    /// The action itself belongs to the UI layer: `panel::toggle_quick_look`
+    /// reads the model to resolve the selected item's file, so running it from
+    /// inside a model borrow re-enters the RefCell and aborts the process. Every
+    /// caller of this one runs the preview after its borrow is released.
+    pub fn select_for_action(&mut self, item: &ClipItem) {
+        self.set_selected_id(Some(item.id.clone()));
     }
 
     pub fn pin_selected(&mut self) {
@@ -709,20 +744,15 @@ impl ShelfModel {
         }
     }
 
-    pub fn export_selected(&mut self) {
-        let Some(s) = self.selected() else { return };
-        crate::shelf::exporter::export(&s);
-    }
-
     /// Only a card that is actually highlighted in the current list; never a
-    /// silent fallback (`deleteSelected`).
-    pub fn delete_selected(&mut self, confirm: impl FnOnce(&ClipItem) -> bool) {
+    /// silent fallback (`deleteSelected`). The pinned confirm belongs to the
+    /// caller (`panel::delete_selected`), which raises it *outside* the model
+    /// borrow.
+    pub fn delete_selected(&mut self) {
         let Some(s) = self.selected() else { return };
         let list = self.items();
         let i = list.iter().position(|it| it.id == s.id).unwrap_or(0);
-        if !self.delete(&s, confirm) {
-            return;
-        }
+        self.delete(&s);
         let rest = self.items();
         let next = if rest.is_empty() {
             None
@@ -755,14 +785,10 @@ impl ShelfModel {
             .contains(tag)
     }
 
-    /// The one way to delete from the shelf: a pinned card asks first
-    /// (`confirm` shows the NSAlert in slice C), everything else goes
-    /// straight away.
-    pub fn delete(&mut self, item: &ClipItem, confirm: impl FnOnce(&ClipItem) -> bool) -> bool {
-        if item.pinned && !confirm(item) {
-            return false;
-        }
+    /// The one way to delete from the shelf. A pinned card's confirm is the
+    /// caller's (`panel::delete_item` / `panel::delete_selected`), raised
+    /// outside the borrow — the alert parks in a nested event loop.
+    pub fn delete(&mut self, item: &ClipItem) {
         self.with_store_mut(|store| store.remove(&item.id));
-        true
     }
 }

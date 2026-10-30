@@ -4,6 +4,8 @@
 
 PasteJar 是 macOS 15+ 的菜单栏工具：剪贴板历史面板 + 截图标注 / 识别文字 / 区域录屏。Rust，objc2 手写 AppKit（不用第三方 UI 框架），链接系统 libsqlite3。Swift 版在 `Sources/Pastory/` 里冻结归档、是行为基准（现行 1.0.6 的可发行档经替换决策仍为 Rust 构建，见 [RUST_REWRITE.md](RUST_REWRITE.md) §6 M7）。
 
+**哪一份是最新的**：现行项目是 `rust/`，现行构建是 `./build-rs.sh` 产出的 `build/PasteJar.app`——要跑、要测、要改的都是它。`Sources/Pastory/` 是冻结的行为基准，不产出可发行档；`build/` 里其他同名 `.app` 是历史副本。区分二进制别靠版本号（每次重建都一样），看 `设置 › 版本更新` 里那行「构建 …」（见 [RUST_REWRITE.md](RUST_REWRITE.md) §0）。
+
 ## 目录
 
 ```
@@ -76,8 +78,21 @@ PASTORY_STORE=$S "$BIN" --selftest settings <out.png>    # 设置页
 PASTORY_STORE=$S "$BIN" --selftest contact <out.png>     # 联系我页
 PASTORY_STORE=$S "$BIN" --selftest welcome <out.png>     # 欢迎卡（PASTORY_HEIGHT 试小屏）
 PASTORY_STORE=$S "$BIN" --selftest note <out.png>        # 桌面便签
+PASTORY_STORE=$S "$BIN" --selftest line <out.png>        # 晾衣绳形态：绳与一排行卡（离屏，不需窗口服务）
+PASTORY_STORE=$S "$BIN" --selftest linewind              # 晾衣绳摆动：挂上 16° → 回过 → 落定，两张卡不同风
+PASTORY_STORE=$S "$BIN" --selftest linehit               # 晾衣绳点击穿透：照片矩形内落点让窗口可点，行外仍然穿透
+PASTORY_STORE=$S "$BIN" --selftest linehover            # 晾衣绳自动呼出/收起：指针到菜单栏 → 露出，离开 → 收起
+PASTORY_STORE=$S "$BIN" --selftest linedrag             # 晾衣绳拖拽门禁：拖拽/行拖动期间不收条、不翻穿透，松手后恢复
+PASTORY_STORE=$S "$BIN" --selftest linewheel            # 晾衣绳横向滚动：滚轮与行拖动同一映射，行宽与布局一致
 PASTORY_STORE=$S "$BIN" --selftest editors <out.png>     # 文本 / 图片编辑窗
-PASTORY_STORE=$S "$BIN" --selftest ocrpanel <out.png>    # 识别文字面板
+PASTORY_STORE=$S "$BIN" --selftest ocrpanel <out.png>    # 识别文字面板（渲染 debugView，不跑 worker 线程）
+PASTORY_STORE=$S "$BIN" --selftest ocrlive               # 两条 worker 线程上的 OCR 路径：图片入库后的后台识别 + 面板 show() 的 spawn 回跳
+PASTORY_STORE=$S "$BIN" --selftest searchlive            # 走真实视图树 + 轮询 tick 的搜索
+PASTORY_STORE=$S "$BIN" --selftest searchtype            # 真实搜索框 + delegate 的输入
+PASTORY_STORE=$S "$BIN" --selftest searchpanel           # 活面板 + 真实按键事件穿过 sendEvent:
+PASTORY_STORE=$S "$BIN" --selftest background <dir>      # 背景图记忆（选图落盘 → 重开仍读得到 → 清除）
+PASTORY_SETTINGS_TAB=background PASTORY_STORE=$S "$BIN" --selftest settings <out.png>  # 指定设置页标签
+PASTORY_SETTINGS_TAB=background PASTORY_STORE=$S "$BIN" --selftest settingsclick       # 真实点击每个设置页上的每个控件
 PASTORY_STORE=$S "$BIN" --selftest updatewin <out.png>   # 更新进度窗
 PASTORY_STORE=$S "$BIN" --selftest liveshot 6             # 真窗口形态的面板 6 秒（材质由窗口服务合成，离屏拍不到），配外部 screencapture
 PASTORY_STORE=$S "$BIN" --selftest annotate <out.png>    # 标注画布 + 工具条，另存 <out>.flat.png 为合成结果
@@ -99,6 +114,7 @@ PASTORY_BACKDROP=#FF0000 …                               # 仅 liveshot：面�
 
 ## 行为约定
 
+- **两种形态（布局轴）**：货架有两条正交的观感轴——**皮肤**（配色 / 圆角 / 字体 / 材质，`App/theme_skin.rs`，9 套）与**形态**（整体布局与交互契约，`App/layout_skin.rs`，2 种）。设置 › 外观 › 形态 切换，9×2 任意组合。**面板**（默认）：底部抽屉，键盘与搜索齐全（见下条）。**晾衣绳**：整屏宽的顶部横条，一根绳挂一排玻璃框照片，夹子夹着、随风摆动；**放弃键盘与搜索**，改用鼠标手势——单击复制、双击粘贴到前台应用、右键菜单、拖到应用 / 文件夹 / 废纸篓。悬停菜单栏下沿呼出、指针离开收起由同一个 30 Hz 时钟做（`presence_check`：停靠时每 4 帧看一眼指针是否到菜单栏热区，露出后指针离开条且不在热区过一小段宽限就收起；手动 ⇧⌘V 呼出后有 1.5 s 不收起的宽限）；整条默认点击穿透，只有指针落在某张照片的矩形内时窗口才接收点击（30 Hz 把指针换算到条内坐标后翻转 `ignoresMouseEvents`）。**鼠标手势的分叉**：按下后往条外走（越过 `DRAG_LEAVE` 24pt）＝拖出一张照片到别的应用（`NSDraggingSource`），仍在条带内横拉（过 `PAN_START` 6pt）＝拖动整行、露出更多照片（同一映射也给了滚轮与触控板，`scrollWheel` 与 pan 走同一个 `scrolled_origin`），原地松手＝单击复制 / 双击粘贴。按钮按住期间由一个 `interacting` 门把时钟挡在外面（`dragging` 门只管拖出），松手后 `mouseUp:` 才交还——否则时钟会在拖动中途把条收起或翻回穿透，手势的 mouse-up 就落到别的窗口上了。**显示设置**：设置 › 外观 › 晾衣绳分组——卡片大小（100/120/150%）、卡片间距（窄/标准/宽 = 24/48/80）、自动呼出（关掉只按 ⇧⌘V 或条内右键呼出）、摆动（关掉是静止的一排）；全部落盘到偏好（`lineCardScale` / `lineCardGap` / `lineAutoReveal` / `lineSwing`）并即时生效（`line_panel::refresh_metrics()`）。两条轴互不干扰：切换形态 = `panel::relayout()`（**允许改 frame**）、切换皮肤 = `panel::retheme()`（**刻意保持 frame 不变**），两者分开是防止「形态切了窗口没动」的假成功。摆动是纯函数（`App/motion.rs`：挂上 16° 的 `interpolatingSpring(46, 2.6)` + 每张卡自己的风 1.6–3.4°），30 Hz 驱动**只在晾衣绳形态存活期间运行**（停靠时降到 1/4 频率只为看热区，切回面板即 `suspend()` 停掉），面板形态零开销。验收：`--selftest line` / `linewind` / `linehit` / `linehover` / `linedrag` / `linewheel`。
 - **快捷键**：默认 ⌥⌘S 截图、⇧⌘V 面板、⌥⌘F 搜索，都可改。录制时当场试注册：被其他应用占用或和自己的另一个重复就拒绝；没有修饰键的单键拒绝；只有 ⌘ / ⇧ 加单键允许但提示会覆盖所有应用。
 - **桌面便签**（`Shelf/DesktopNotes.swift`、`DesktopNoteView.swift`）：把面板里的卡向上拖出面板边界即成为桌面便签（松手在面板上=取消），右键也有「贴到桌面」；便签是同一张纸卡、全文展示（文本最高屏高 60%，超出卡内滚动），底部是 编辑 / 图层 / 关闭；单击复制、双击贴进前台应用；非激活面板，不抢焦点。贴上即自动 Pin；面板里的卡保留并带 note 标记；卡被删便签同删。层级逐张决定（便签底部的图层键 / 右键）：浮于窗口上（默认，拖出时一定看得见）或仅桌面显示（桌面图标之上、所有应用窗口之下）；所有 Space 可见。发现路径：欢迎卡「试一试」多一条、卡片右键「贴到桌面」、以及首次启动本版本时种进历史的 Pin 卡「PasteJar 怎么用」（`Shelf/HowToCard.swift`，普通卡片，删了不再出现）。位置存在偏好 `desktopNotes`，启动恢复并夹回可见屏幕。`--selftest note` 渲染。
 - **面板键盘**：双击 = 复制、收起并粘贴到刚才的应用；⏎ = 复制并收起，只有设置选了「双击 + 回车」且这张卡是用方向键亲手选中的才同样粘贴（搜索、筛选、删除后自动落到的高亮都不算；点击卡片后键盘会交还给原应用，所以鼠标选中后的回车到不了面板）；← → ↑ ↓ 选；空格 Quick Look；⌘P Pin；⌘S 保存到本地；⌫ 删除（Pin 项确认）；⌘F 搜索；直接打字即搜索；⎋ 依次关闭重命名框 / 返回 / 清空搜索 / 收起。设置页 / 联系我打开时只认 ⎋ 和 ⌘F。

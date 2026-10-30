@@ -41,6 +41,28 @@ mod cc {
     }
 }
 
+/// Recognize an image's text off the main thread and write it back.
+///
+/// This is what gives a copied screenshot its `ocr_text`: the search index
+/// picks it up, and the card's right-click menu grows its 「复制识别出的文字」
+/// item. Without it every image card kept `ocr_text: None` forever, so that
+/// menu item could never appear — the recognition path existed but nothing
+/// ever called it outside the annotation panel.
+///
+/// `if_hash` is checked again in `set_ocr`, so a card whose image was replaced
+/// while this ran keeps the newer image's text.
+fn background_ocr(image: CFRetained<CGImage>, if_hash: i64, id: String) {
+    std::thread::spawn(move || {
+        // A bare std thread has no autorelease pool; Vision returns
+        // autoreleased observations, so without this they pile up.
+        let text = objc2::rc::autoreleasepool(|_pool| {
+            crate::annotate::ocr::recognize(&image).ok()
+        });
+        let text = text.filter(|t| !t.is_empty());
+        with(|s| s.set_ocr(text, &id, if_hash));
+    });
+}
+
 /// `stableHash` (ClipStore.swift:6): SHA256 of the payload, first 8 digest
 /// bytes load little-endian into an Int. Image items always hash the original
 /// PNG, whatever the storage format (red line 9).
@@ -527,9 +549,11 @@ impl ClipStore {
         let id = item.id.clone();
         self.prepend(item.clone());
         if needs_ocr {
-            let _ = id;
-            // M4: OCR.recognize(cg) on a utility thread, then
-            // set_ocr(text, for: id, if_hash: hash) back on the store.
+            // The image itself is what OCR sees, and the store no longer holds
+            // a borrow by the time the worker runs. `set_ocr` re-checks the
+            // hash, so a card edited while the recognition was in flight keeps
+            // its new image's text rather than this one's.
+            background_ocr(cg.clone(), hash, id);
         }
         Some(item)
     }
@@ -715,8 +739,7 @@ impl ClipStore {
         }
         let item = self.items[i].clone();
         self.persist(&item);
-        let _ = hash;
-        // M4: background OCR → set_ocr(text, for: id, if_hash: hash).
+        background_ocr(cg.clone(), hash, id.to_string());
     }
 
     /// Same payload anywhere in the history (same kind family) → bring that

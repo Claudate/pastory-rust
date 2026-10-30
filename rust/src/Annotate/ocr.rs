@@ -5,6 +5,7 @@
 //! by top edge, then left edge).
 
 use objc2::rc::Retained;
+use objc2::AnyThread;
 use objc2_core_graphics::CGImage;
 use objc2_foundation::{NSArray, NSString};
 use objc2_vision::{
@@ -22,10 +23,14 @@ pub fn recognize(image: &CGImage) -> Result<String, String> {
         NSString::from_str("en-US"),
     ]));
     request.setUsesLanguageCorrection(true);
-    let mtm = objc2::MainThreadMarker::new().expect("main thread");
+    // No `MainThreadMarker`: Vision is thread-safe and the Swift baseline runs
+    // this very call on a detached utility task. Demanding the main thread
+    // here made every real recognition panic on the caller's own thread — the
+    // annotation panel stayed on 「识别中…」 and the background pass that gives
+    // an image its searchable text could never run.
     let handler = unsafe {
         VNImageRequestHandler::initWithCGImage_options(
-            mtm.alloc(),
+            VNImageRequestHandler::alloc(),
             image,
             &objc2_foundation::NSDictionary::new(),
         )

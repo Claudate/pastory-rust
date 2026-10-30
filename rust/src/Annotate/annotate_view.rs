@@ -860,7 +860,14 @@ impl AnnotateView {
     fn annotate_mouse_dragged(&self, event: &NSEvent) {
         let p = self.clamped_point(event);
         self.ivars().moved.set(true);
-        if let Some(mut d) = self.ivars().draft.borrow_mut().take() {
+        // The borrow guards are taken out of the `if let` heads on purpose: a
+        // temporary created in an `if let` scrutinee lives until the end of
+        // that block, so writing the updated value back inside it would borrow
+        // the same cell twice and abort the process (`RefCell already
+        // borrowed`). `let` / `match` drop their temporaries at the end of the
+        // statement, which is why only these two sites were affected.
+        let draft = self.ivars().draft.borrow_mut().take();
+        if let Some(mut d) = draft {
             if d.tool == AnnotateTool::Pen {
                 d.points.push(p);
             } else {
@@ -870,7 +877,11 @@ impl AnnotateView {
             self.invalidate();
             return;
         }
-        if let Some(Drag::Region { last_window: last }) = *self.ivars().drag.borrow() {
+        let region = match *self.ivars().drag.borrow() {
+            Some(Drag::Region { last_window }) => Some(last_window),
+            _ => None,
+        };
+        if let Some(last) = region {
             let now = event.locationInWindow();
             let (dx, dy) = (now.x - last.x, now.y - last.y);
             *self.ivars().drag.borrow_mut() = Some(Drag::Region { last_window: now });

@@ -4,7 +4,11 @@ version = "1.0.7"
 edition = "2021"
 
 [dependencies]
-objc2 = "0.6.4"
+# "exception": the searchpanel self-test dispatches real window-server clicks
+# into AppKit, and `objc2::exception::catch` turns an exception raised there
+# into a readable FAIL line. Without it such a throw aborts the process with no
+# reason printed (an ObjC exception cannot unwind through a Rust frame).
+objc2 = { version = "0.6.4", features = ["exception"] }
 block2 = "0.6"
 objc2-foundation = "0.3.2"
 objc2-app-kit = "0.3.2"

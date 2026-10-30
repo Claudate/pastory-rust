@@ -37,8 +37,10 @@
 <p align="center">所有东西都在你自己的电脑上。没有账号，除每天一次检查更新外不联网，隐私安全 100% 在你手里。</p>
 
 <p align="center">
-  <img src="docs/images/wechat-group.png" alt="微信群：PasteJar 小小群" width="160"><br>
-  <sub>扫码进微信群，聊用法、提想法</sub>
+  <img src="docs/images/wechat-group.png" alt="微信群：PasteJar 小小群" width="160">
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/images/wechat-personal.png" alt="作者个人微信" width="160"><br>
+  <sub>扫码进微信群聊用法、提想法 · 或加我个人微信，备注一下 PasteJar</sub>
 </p>
 
 <br>
@@ -182,8 +184,18 @@ Rust 单 crate（objc2 手写 AppKit），Rust 工具链 stable + Command Line T
 
 ## 致谢与许可
 
-字体 [Caveat](https://fonts.google.com/specimen/Caveat)、[Ysabeau Office](https://fonts.google.com/specimen/Ysabeau+Office)（SIL 开源字体许可）。交互受 [Paste](https://pasteapp.io) 启发，标注风格来自 [Excalidraw](https://excalidraw.com)。
+字体 [Caveat](https://fonts.google.com/specimen/Caveat)、[Ysabeau Office](https://fonts.google.com/specimen/Ysabeau+Office)（SIL 开源字体许可）。交互受 [Paste](https://pasteapp.io) 启发，标注风格来自 [Excalidraw](https://excalidraw.com)。晾衣绳货架上的夹子图标是 [game-icons.net](https://game-icons.net) 的 [clothespin](https://game-icons.net/1x1/lorc/clothespin.html)（作者 Lorc，[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)）。
 
 感谢 [@behindthebeat](https://github.com/behindthebeat) 贡献了大历史下的搜索性能优化，以及可调整大小、自动换行的文字标注。
 
 [MIT License](LICENSE) · © 2026 nothingbutcici
+
+## 上架（Mac App Store）一条命令
+
+```bash
+./MAS-上架.command            # 证书 → App ID → ASC 记录 → profile → 构建 → dist/PasteJar-<版本>.pkg
+./MAS-上架.command --upload   # 再送 App Store Connect
+```
+
+从干净 Mac 开始的完整步骤、每条失败提示的含义、以及 Apple 两侧接口都失效时的全手动路径，见
+[docs/MAS_AUTO.md](docs/MAS_AUTO.md)。环境缺什么先跑 `./scripts/mas-doctor.sh`，只补工具链跑 `./scripts/mas-bootstrap.sh`。

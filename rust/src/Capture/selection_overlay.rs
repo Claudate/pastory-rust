@@ -117,8 +117,10 @@ impl OverlayWindow {
 define_class!(
     // SAFETY:
     // - NSPanel subclass, main-thread only, like every window in this app.
-    // - canBecomeKey (yes) + canBecomeMain (no): becoming main would activate
-    //   the app and the menu bar switch would land in the frozen picture.
+    // - canBecomeKeyWindow (yes) + canBecomeMainWindow (no): becoming main would
+    //   activate the app and the menu bar switch would land in the frozen
+    //   picture. The register names are the ObjC ones (`canBecomeKey` is only
+    //   the Swift property spelling and would override nothing).
     #[unsafe(super(NSPanel))]
     #[thread_kind = MainThreadOnly]
     #[ivars = OverlayWindowIvars]
@@ -127,12 +129,12 @@ define_class!(
     unsafe impl NSObjectProtocol for OverlayWindow {}
 
     impl OverlayWindow {
-        #[unsafe(method(canBecomeKey))]
+        #[unsafe(method(canBecomeKeyWindow))]
         fn can_become_key(&self) -> objc2::runtime::Bool {
             true.into()
         }
 
-        #[unsafe(method(canBecomeMain))]
+        #[unsafe(method(canBecomeMainWindow))]
         fn can_become_main(&self) -> objc2::runtime::Bool {
             false.into()
         }
@@ -1368,10 +1370,12 @@ pub fn present(
             .cloned()
     };
     if let Some(h) = &host {
-        unsafe {
-            // SAFETY: msg_send for the uncovered `makeKey`.
-            let _: () = msg_send![&**h, makeKey];
-        }
+        // `-makeKeyWindow` is the selector. `-makeKey` does not exist on
+        // NSWindow/NSPanel (Swift spells makeKeyWindow as `makeKey()`, which
+        // is where the mistake came from) and sending it raised
+        // `unrecognized selector`, aborting the process on the first capture.
+        // Same fix as the OCR panel's show().
+        h.makeKeyWindow();
     }
     for w in c.overlays.borrow().iter() {
         w.invalidateCursorRectsForView(&w.overlay_view());

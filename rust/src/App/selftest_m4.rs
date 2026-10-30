@@ -11,6 +11,7 @@ use crate::annotate::annotation::{palette, AnnotateTool, Annotation, StrokeSize}
 use crate::annotate::ocr;
 use crate::app::theme;
 use crate::capture::screenshotter;
+use crate::clipboard::store::{self, Source};
 
 /// `--selftest ocr [in.png]` (SelfTest.ocr).
 pub fn ocr(path: Option<&str>) -> bool {
@@ -228,7 +229,320 @@ pub fn ocrpanel(out: &str) -> bool {
     app.setActivationPolicy(objc2_app_kit::NSApplicationActivationPolicy::Accessory);
     let sample = "PasteJar 是一个截图工具\n所有复制过的内容都留在剪贴板里\nMade in 2026 · 中英混排 OK";
     let view = crate::annotate::ocr_panel::controller().debug_view(sample);
-    crate::app::selftest_m2::snapshot(&view, out)
+    let rendered = crate::app::selftest_m2::snapshot(&view, out);
+
+    // The render only shows the panel at the size the content asked for. The
+    // point of this round is that the panel *follows* its bounds: lay it out
+    // at 400×350 and again at 900×700 and check the scroll box grew with the
+    // height (with the old one-shot geometry it stayed put at both).
+    let c = crate::annotate::ocr_panel::controller();
+    let a = c.debug_layout_at(400.0, 350.0);
+    let b = c.debug_layout_at(900.0, 700.0);
+    let (a, b) = match (a, b) {
+        (Some(a), Some(b)) => (a, b),
+        _ => {
+            println!("FAIL 识别文字 panel has no laid-out scroll view");
+            return false;
+        }
+    };
+    println!(
+        "     识别文字 layout 400×350: scroll ({:.0},{:.0}) {:.0}×{:.0}",
+        a.0, a.1, a.2, a.3
+    );
+    println!(
+        "     识别文字 layout 900×700: scroll ({:.0},{:.0}) {:.0}×{:.0}",
+        b.0, b.1, b.2, b.3
+    );
+    let grew = b.3 - a.3 > 250.0 && b.2 - a.2 > 400.0;
+    if !grew {
+        println!("FAIL the scroll box did not follow the resize");
+    }
+    rendered && grew
+}
+
+/// `--selftest ocrlive` — the two OCR paths that only exist on a worker
+/// thread, which neither `ocr` nor `ocrpanel` ever starts.
+///
+/// `ocr` calls `recognize` inline on the main thread and `ocrpanel` renders
+/// `debugView`, so both skip the `std::thread` the product actually uses: the
+/// background pass `ClipStore::insert_image` hands a new screenshot to (the
+/// one that gives an image card its searchable text and its 「复制识别出的文字」
+/// menu item) and the annotation panel's own `show()` → recognize → main-queue
+/// bounce. Both of them used to panic on the caller's own thread — `ocr.rs`
+/// demanded a `MainThreadMarker` — which left the panel on 「识别中…」 and every
+/// image card with `ocr_text: None`. This drives both for real and waits for
+/// the result to arrive.
+pub fn ocrlive() -> bool {
+    let mtm = objc2::MainThreadMarker::new().expect("selftest on main thread");
+    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(objc2_app_kit::NSApplicationActivationPolicy::Accessory);
+    let mut ok = Checks(true);
+
+    // Vision needs seconds per image; every wait below is generous on purpose.
+    let wait_secs = 60.0;
+
+    let Some(image) = crate::app::selftest_m2::render_sample() else {
+        println!("FAIL sample render");
+        return false;
+    };
+    let Some(png) = screenshotter::png_data(&image) else {
+        println!("FAIL png encode");
+        return false;
+    };
+    // Start from an empty scratch store whatever it held before.
+    let stale: Vec<String> = store::read(|s| s.items.iter().map(|it| it.id.clone()).collect());
+    store::with(|s| s.remove_ids(&stale));
+
+    // 1. ClipStore's background pass. Inserting with no text is what a real
+    //    copy of a screenshot does; the text has to come back by itself.
+    let Some(item) = store::with(|s| s.insert_image(&png, &Source::pastory(), None)) else {
+        println!("FAIL insert png");
+        return false;
+    };
+    let id = item.id.clone();
+    ok.check(
+        "a freshly copied screenshot starts with no recognized text",
+        item.ocr_text.is_none(),
+    );
+    let t0 = std::time::Instant::now();
+    let mut recognized: Option<String> = None;
+    while t0.elapsed().as_secs_f64() < wait_secs {
+        pump(0.1);
+        recognized = store::read(|s| {
+            s.items
+                .iter()
+                .find(|it| it.id == id)
+                .and_then(|it| it.ocr_text.clone())
+        });
+        if recognized.is_some() {
+            break;
+        }
+    }
+    let stores_text = recognized.as_deref().is_some_and(|t| t.contains("PasteJar"));
+    println!(
+        "     background OCR answered in {:.1}s: {:?}",
+        t0.elapsed().as_secs_f64(),
+        recognized.as_deref().unwrap_or("(never)")
+    );
+    ok.check(
+        "the background pass fills ocr_text by itself (search + the card menu need it)",
+        stores_text,
+    );
+
+    // 2. The annotation panel's own path: `show()` spawns, the result comes
+    //    back through the main queue into the text view. Before the fix this
+    //    thread panicked and the panel sat on 「识别中…」 forever.
+    let c = crate::annotate::ocr_panel::controller();
+    c.close();
+    c.show(
+        CGRect::new(CGPoint::new(120.0, 120.0), CGSize::new(200.0, 120.0)),
+        image.clone(),
+        1,
+        Box::new(|_text| {}),
+    );
+    let t1 = std::time::Instant::now();
+    let mut shown: Option<String> = None;
+    while t1.elapsed().as_secs_f64() < wait_secs {
+        pump(0.1);
+        shown = c.current_text();
+        if shown.is_some() {
+            break;
+        }
+    }
+    let panel_text = shown.as_deref().is_some_and(|t| t.contains("PasteJar"));
+    println!(
+        "     panel answered in {:.1}s: {:?}",
+        t1.elapsed().as_secs_f64(),
+        shown.as_deref().unwrap_or("(stuck on 识别中…)")
+    );
+    ok.check(
+        "the 识别文字 panel leaves 识别中… and shows the text",
+        panel_text,
+    );
+    c.close();
+
+    ok.0
+}
+
+/// `--selftest ocrkeyboard` — the one stage `ocrpanel` and `ocrlive` both
+/// skip: whether the 识别文字 panel actually takes the keyboard.
+///
+/// The panel's `show()` asks to be key and then puts the caret in the text
+/// view; both existing OCR tests read only the resulting *text*, which arrived
+/// whether or not the window ever became key. This drives the panel for real
+/// and checks the two things a user would notice: the caret is in the box, and
+/// a keystroke reaches it.
+pub fn ocrkeyboard() -> bool {
+    let mtm = objc2::MainThreadMarker::new().expect("selftest on main thread");
+    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(objc2_app_kit::NSApplicationActivationPolicy::Accessory);
+    let mut ok = Checks(true);
+
+    // The panel window is built inside `show()`, so the window has to exist
+    // before any property can be read off it. `show()` is the caller that used
+    // to be a silent no-op, so this drives the real thing rather than poking a
+    // synthetic window.
+    let c = crate::annotate::ocr_panel::controller();
+    c.close();
+    let Some(image) = crate::app::selftest_m2::render_sample() else {
+        println!("FAIL sample render");
+        return false;
+    };
+    // A real 识别文字 click happens with the app already in front (the picker
+    // activated it); an accessory process that is not active is handed no
+    // keyboard by macOS whatever the window answers, so activate first or this
+    // would test the wrong thing.
+    #[allow(deprecated)]
+    let _ = objc2_app_kit::NSRunningApplication::currentApplication().activateWithOptions(
+        objc2_app_kit::NSApplicationActivationOptions::ActivateIgnoringOtherApps,
+    );
+    c.show(
+        CGRect::new(CGPoint::new(120.0, 120.0), CGSize::new(200.0, 120.0)),
+        image,
+        1,
+        Box::new(|_text| {}),
+    );
+    // The result arrives through the main queue and the activation lands
+    // asynchronously; wait for both.
+    let t0 = std::time::Instant::now();
+    while t0.elapsed().as_secs_f64() < 60.0 {
+        pump(0.1);
+        if c.current_text().is_some() {
+            break;
+        }
+    }
+    let Some(win) = c.selftest_window() else {
+        println!("FAIL show() built no 识别文字 window");
+        return false;
+    };
+
+    // What the panel answers for itself, and what a stock NSPanel answers for
+    // each mask. The titled panel is expected to answer YES on its own — the
+    // point of the control is to show which mask is the one that needs an
+    // override, so a future change here is argued from measurement.
+    let can_key = win.canBecomeKeyWindow();
+    println!(
+        "     live 识别文字 window {} answers canBecomeKeyWindow={}",
+        String::from_utf8_lossy(win.class().name().to_bytes()),
+        can_key
+    );
+    {
+        let make_stock = |style: objc2_app_kit::NSWindowStyleMask| {
+            let p = mtm.alloc::<objc2_app_kit::NSPanel>();
+            objc2_app_kit::NSPanel::initWithContentRect_styleMask_backing_defer(
+                p,
+                CGRect::new(CGPoint::ZERO, CGSize::new(400.0, 350.0)),
+                style,
+                objc2_app_kit::NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        let borderless = make_stock(
+            objc2_app_kit::NSWindowStyleMask::Borderless
+                | objc2_app_kit::NSWindowStyleMask::NonactivatingPanel,
+        );
+        let titled = make_stock(win.styleMask());
+        println!(
+            "     control: stock NSPanel borderless+nonactivating canBecomeKeyWindow={}, titled+nonactivating canBecomeKeyWindow={}",
+            borderless.canBecomeKeyWindow(),
+            titled.canBecomeKeyWindow()
+        );
+        ok.check(
+            "this panel's titled mask is the one that can become key on its own",
+            titled.canBecomeKeyWindow() && can_key,
+        );
+        // The shelf's mask — the one that silently could not, which is why
+        // `ShelfPanel` carries a `canBecomeKeyWindow` override. Kept here so
+        // the difference between the two panels stays documented by a run.
+        ok.check(
+            "a stock borderless NSPanel cannot become key (why the shelf overrides it)",
+            !borderless.canBecomeKeyWindow(),
+        );
+    }
+    // `show()` is the caller of the no-op: after it returns, the panel must
+    // have actually taken the keyboard, and the text view must own the caret.
+    println!(
+        "     after show(): isKeyWindow={} firstResponder={}",
+        win.isKeyWindow(),
+        win.firstResponder()
+            .map(|r| String::from_utf8_lossy(r.class().name().to_bytes()).into_owned())
+            .unwrap_or_else(|| "<none>".to_string())
+    );
+    // A text view is its own field editor: when the caret is in it, the
+    // window's first responder *is* that view. (`.currentEditor()` lives on
+    // NSWindow, not on the view.)
+    let caret_in_box = c
+        .selftest_text_view()
+        .map(|tv| {
+            win.firstResponder()
+                .is_some_and(|r| r.isEqual(Some(&*tv)))
+        })
+        .unwrap_or(false);
+    ok.check(
+        "show() leaves a caret in the recognized text (the box is editable)",
+        caret_in_box,
+    );
+
+    // A real keystroke through the window: only a key window routes one into
+    // the text view, so this is the end-to-end proof that the panel is live.
+    let send_key = |ch: &str, code: u16| {
+        let s = objc2_foundation::NSString::from_str(ch);
+        let ev = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            objc2_app_kit::NSEventType::KeyDown,
+            CGPoint::ZERO,
+            objc2_app_kit::NSEventModifierFlags::empty(),
+            0.0,
+            win.windowNumber(),
+            None,
+            &s,
+            &s,
+            false,
+            code,
+        )
+        .expect("synthetic key event");
+        win.sendEvent(&ev);
+    };
+    let before = c.current_text().unwrap_or_default();
+    send_key("Z", 6);
+    pump(0.2);
+    let after = c.current_text().unwrap_or_default();
+    println!(
+        "     keystroke landed: {:?} -> {:?}",
+        truncate(&before),
+        truncate(&after)
+    );
+    ok.check(
+        "a key on the live 识别文字 panel reaches its text view",
+        after != before,
+    );
+
+    c.close();
+    ok.0
+}
+
+/// One-line preview of a long OCR result for the log.
+fn truncate(s: &str) -> String {
+    let head: String = s.chars().take(28).collect();
+    if s.chars().count() > 28 {
+        format!("{head}…")
+    } else {
+        head
+    }
+}
+
+/// Pump the main run loop for `seconds` so the worker's main-queue bounce and
+/// the store lock both get a turn.
+fn pump(seconds: f64) {
+    use objc2_foundation::{NSDate, NSRunLoop};
+    let run_loop = NSRunLoop::mainRunLoop();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds);
+    while std::time::Instant::now() < deadline {
+        let limit = NSDate::dateWithTimeIntervalSinceNow(0.05);
+        // SAFETY: NSDefaultRunLoopMode is a valid mode token for the main loop.
+        let mode: &'static objc2_foundation::NSRunLoopMode =
+            unsafe { objc2_foundation::NSDefaultRunLoopMode };
+        run_loop.runMode_beforeDate(mode, &limit);
+    }
 }
 
 // MARK: annotationtext (AnnotationTextSelfTest.swift)
@@ -453,7 +767,6 @@ fn annotationtext_live(ok: &mut Checks, out: &str, original: &Annotation, sample
         }
         None
     }
-    let _ = two_step_drag;
     let _ = plain_drag;
 
     canvas.set_tool(Some(AnnotateTool::Text));
@@ -664,7 +977,27 @@ fn annotationtext_live(ok: &mut Checks, out: &str, original: &Annotation, sample
     ok.check("the next click starts a new box", active_editor(&canvas).is_some());
     canvas.commit_text_editor();
 
-    // 7. Flattened export at full pixel size.
+    // 7. A real drag across the canvas. This is the freehand branch of
+    // `mouseDragged`, which used to abort the process: the borrow temporary
+    // in `if let Some(d) = draft.borrow_mut().take()` lived to the end of the
+    // block, so writing the updated draft back inside it borrowed the same
+    // cell twice (Rust 2021 `if let` scoping). One drag = one stroke.
+    canvas.set_tool(Some(AnnotateTool::Pen));
+    // A drag that starts on an existing annotation moves it instead of
+    // drawing, so the canvas goes blank for this probe (and is put back
+    // before the export below).
+    let kept = canvas.annotations();
+    canvas.set_annotations_and_select(Vec::new(), None);
+    two_step_drag(CGPoint::new(150.0, 300.0), CGPoint::new(300.0, 380.0));
+    ok.check(
+        "a freehand drag lands exactly one stroke",
+        canvas.annotations().len() == 1
+            && canvas.annotations().last().map(|a| a.tool) == Some(AnnotateTool::Pen),
+    );
+    canvas.set_annotations_and_select(kept, None);
+    canvas.set_tool(Some(AnnotateTool::Text));
+
+    // 8. Flattened export at full pixel size.
     let flat = canvas.rendered_image();
     ok.check(
         "export keeps the original image resolution",

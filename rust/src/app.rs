@@ -9,6 +9,8 @@
 
 #[path = "App/sandbox.rs"]
 pub mod sandbox;
+#[path = "App/activation.rs"]
+pub mod activation;
 #[path = "App/brand.rs"]
 pub mod brand;
 #[path = "App/localization.rs"]
@@ -41,6 +43,14 @@ pub mod synthetic_movie;
 pub mod coordinates;
 #[path = "App/theme.rs"]
 pub mod theme;
+#[path = "App/theme_skin.rs"]
+pub mod theme_skin;
+#[path = "App/layout_skin.rs"]
+pub mod layout_skin;
+#[path = "App/background.rs"]
+pub mod background;
+#[path = "App/motion.rs"]
+pub mod motion;
 #[path = "App/hotkey.rs"]
 pub mod hotkey;
 #[path = "App/permissions.rs"]
@@ -56,3 +66,7 @@ pub mod updater;
 pub mod update_progress;
 #[path = "App/selftest_m6.rs"]
 pub mod selftest_m6;
+#[path = "App/selftest_m8.rs"]
+pub mod selftest_m8;
+#[path = "App/selftest_draw.rs"]
+pub mod selftest_draw;

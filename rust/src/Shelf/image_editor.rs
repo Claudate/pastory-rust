@@ -41,6 +41,7 @@ struct EditorState {
     window: RefCell<Option<Retained<ImageEditorWindow>>>,
     canvas: RefCell<Option<Retained<AnnotateView>>>,
     toolbar: RefCell<Option<Retained<AnnotateToolbar>>>,
+    mat: RefCell<Option<Retained<CanvasMatView>>>,
     reopen_shelf: RefCell<bool>,
 }
 
@@ -97,6 +98,12 @@ pub struct ImageEditorIvars {
     state: RefCell<Option<Box<EditorState>>>,
     canvas: RefCell<Option<Retained<AnnotateView>>>,
     toolbar: RefCell<Option<Retained<AnnotateToolbar>>>,
+    /// The paper mat, so `layout` can re-place it with the canvas.
+    mat: RefCell<Option<Retained<CanvasMatView>>>,
+    /// Natural size of the picture (unscaled points) and its frame as
+    /// fractions of that — a resize scales the arrangement with the picture.
+    natural: RefCell<Option<CGSize>>,
+    rel: RefCell<Vec<(f64, f64, f64, f64)>>,
 }
 
 define_class!(
@@ -147,14 +154,71 @@ define_class!(
             crate::annotate::ocr_panel::controller().close();
             if let Some(s) = state.as_ref() {
                 open_map().remove(&s.item.id);
+                crate::shelf::line_panel::external_window_closed();
                 if *s.reopen_shelf.borrow() {
                     crate::shelf::panel::show();
                 }
             }
             let _ = state.take(); // EditorState's Rust half drops with its window
         }
+
+        /// The window is resizable: re-place the mat, the canvas and the
+        /// toolbar against the new content box (before this the frames were
+        /// fixed at what `make` computed).
+        #[unsafe(method(windowDidResize:))]
+        fn window_did_resize(&self, _n: &NSNotification) {
+            let raw = *self.ivars().window.borrow();
+            let w: &ImageEditorWindow = unsafe { &*(raw as *const ImageEditorWindow) };
+            if let Some(c) = w.contentView() {
+                let b = c.bounds().size;
+                w.layout(b.width, b.height);
+            }
+        }
     }
 );
+
+/// Mat padding around the picture on each side.
+const PAD: f64 = 40.0;
+/// Titlebar strip the full-size content view runs under.
+const TITLEBAR_STRIP: f64 = 44.0;
+/// Toolbar column below the picture (buttons + room for the sub bar).
+const TOOLBAR_H: f64 = 56.0 + 84.0;
+
+/// Where the window and the picture land for a picture of `natural` points on a
+/// screen offering `vf`.
+///
+/// Split out of `make` so the clamp is a testable function rather than a
+/// property of one render: the picture is scaled down to whatever the screen
+/// can actually hand it (so a tall phone screenshot cannot build a window
+/// taller than the display), and the window then takes that picture plus the
+/// chrome, never narrower than the toolbar needs and never larger than the
+/// visible frame. Returns `(window_size, canvas_frame)`.
+pub(crate) fn editor_geometry(natural: CGSize, vf: CGRect) -> (CGSize, CGRect) {
+    // Everything the window wraps around the picture: mat padding on both
+    // sides, the titlebar strip, and the toolbar column.
+    let chrome_h = PAD + TITLEBAR_STRIP + TOOLBAR_H;
+    let avail_w = (vf.size.width - 80.0 - PAD * 2.0).max(200.0);
+    let avail_h = (vf.size.height - 40.0 - chrome_h).max(200.0);
+    let fit = (avail_w / natural.width.max(1.0)).min(avail_h / natural.height.max(1.0));
+    // Never upscale: the floor scale only kicks in for pictures so small the
+    // editor would otherwise open on a postage stamp.
+    let k = fit.min(1.0_f64.max(360.0 / natural.width.max(natural.height)));
+    let canvas_size = CGSize::new((natural.width * k).round(), (natural.height * k).round());
+    let win_w = (canvas_size.width + PAD * 2.0)
+        .max(900.0)
+        .min((vf.size.width - 40.0).max(600.0));
+    let win_h = (canvas_size.height + chrome_h).min((vf.size.height - 40.0).max(400.0));
+    let win = CGSize::new(win_w, win_h);
+    // Centered in the room left between the toolbar column and the titlebar
+    // strip — what keeps a height-clamped window from cutting the top off.
+    let canvas_y =
+        (TOOLBAR_H + (win_h - TOOLBAR_H - canvas_size.height) / 2.0).max(TITLEBAR_STRIP + 6.0);
+    let canvas = CGRect::new(
+        CGPoint::new(((win_w - canvas_size.width) / 2.0).round(), canvas_y.round()),
+        canvas_size,
+    );
+    (win, canvas)
+}
 
 impl ImageEditorWindow {
     /// `open(_:)` — reopen the live editor if one exists for this card.
@@ -173,16 +237,12 @@ impl ImageEditorWindow {
         let e = Self::make(item, cg);
         let editable = e;
         open_map().insert(item.id.clone(), editable.clone());
-        let mtm = MainThreadMarker::new().expect("main thread");
-        let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-        unsafe {
-            let _: () = msg_send![&app, activate];
-        }
-        #[allow(deprecated)]
-        app.activateIgnoringOtherApps(true);
+        crate::app::activation::activate_app();
         *editable.ivars().state.borrow_mut().as_mut().expect("state").reopen_shelf.borrow_mut() =
             crate::shelf::panel::is_visible();
         crate::shelf::panel::hide();
+        // The strip must not climb back over this window (`external_hold`).
+        crate::shelf::line_panel::external_window_opened();
         editable.makeKeyAndOrderFront(None);
     }
 
@@ -195,31 +255,135 @@ impl ImageEditorWindow {
         Some(e.contentView().expect("content"))
     }
 
+    /// Self-test only: build the editor for a real card and report the geometry
+    /// `make` settled on — `(content_w, content_h, canvas_x, canvas_y,
+    /// canvas_w, canvas_h, toolbar_x, toolbar_y, toolbar_w, toolbar_h)`. A
+    /// render only shows the initial fit; these numbers say whether the canvas
+    /// and the toolbar actually landed inside the window.
+    #[allow(clippy::type_complexity)]
+    pub fn debug_geometry(item: &ClipItem) -> Option<(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64)> {
+        let png = crate::clipboard::store::read(|s| s.png(item))?;
+        let cg = crate::capture::screenshotter::image_from_png(&png)?;
+        let e = Self::make(item, cg);
+        open_map().insert(item.id.clone(), e.clone());
+        let content = e.contentView()?;
+        let cb = content.bounds().size;
+        let canvas = e.ivars().canvas.borrow().as_ref()?.frame();
+        let bar = e.ivars().toolbar.borrow().as_ref()?.frame();
+        Some((
+            cb.width,
+            cb.height,
+            canvas.min().x,
+            canvas.min().y,
+            canvas.size.width,
+            canvas.size.height,
+            bar.min().x,
+            bar.min().y,
+            bar.size.width,
+            bar.size.height,
+        ))
+    }
+
+    /// Self-test only: build the editor for a real card, run the resize path
+    /// for a content box of `size`, and report the canvas and toolbar frames —
+    /// so a resize that does nothing reads as frames still at their
+    /// default-size origin.
+    pub fn debug_layout_at(
+        item: &ClipItem,
+        size: CGSize,
+    ) -> Option<(f64, f64, f64, f64, f64, f64, f64, f64)> {
+        let png = crate::clipboard::store::read(|s| s.png(item))?;
+        let cg = crate::capture::screenshotter::image_from_png(&png)?;
+        let e = Self::make(item, cg);
+        open_map().insert(item.id.clone(), e.clone());
+        if let Some(c) = e.contentView() {
+            c.setFrame(CGRect::new(CGPoint::ZERO, size));
+        }
+        e.layout(size.width, size.height);
+        let canvas = e.ivars().canvas.borrow().as_ref()?.frame();
+        let bar = e.ivars().toolbar.borrow().as_ref()?.frame();
+        Some((
+            canvas.min().x,
+            canvas.min().y,
+            canvas.size.width,
+            canvas.size.height,
+            bar.min().x,
+            bar.min().y,
+            bar.size.width,
+            bar.size.height,
+        ))
+    }
+
+    fn items(&self) -> Option<(Retained<CanvasMatView>, Retained<AnnotateView>, Retained<AnnotateToolbar>)> {
+        let state = self.ivars().state.borrow();
+        let s = state.as_ref()?;
+        let mat = s.mat.borrow().clone()?;
+        let canvas = s.canvas.borrow().clone()?;
+        let toolbar = s.toolbar.borrow().clone()?;
+        Some((mat, canvas, toolbar))
+    }
+
+    /// Place the mat, the canvas and the toolbar against a content box of
+    /// `w`×`h`. The picture keeps its aspect and never upscales past 1:1; the
+    /// toolbar stays a fixed-size bar, re-centred horizontally.
+    pub(crate) fn layout(&self, w: f64, h: f64) {
+        let (Some(un), Some((mat, canvas, bar))) =
+            (*self.ivars().natural.borrow(), self.items())
+        else {
+            return;
+        };
+        let rel = self.ivars().rel.borrow().clone();
+        let avail_w = (w - 2.0 * PAD).max(80.0);
+        let avail_h = (h - TITLEBAR_STRIP - TOOLBAR_H).max(80.0);
+        let k = ((avail_w / un.width.max(1.0)).min(avail_h / un.height.max(1.0)))
+            .min(1.0)
+            .max(0.02);
+        let uw = un.width * k;
+        let uh = un.height * k;
+        let ux = ((w - uw) / 2.0).round();
+        let uy = (TOOLBAR_H + (h - TOOLBAR_H - uh) / 2.0)
+            .round()
+            .max(TITLEBAR_STRIP + 6.0);
+        let frame_of = |r: (f64, f64, f64, f64)| {
+            CGRect::new(
+                CGPoint::new(ux + r.0 * uw, uy + r.1 * uh),
+                CGSize::new((r.2 * uw).max(1.0), (r.3 * uh).max(1.0)),
+            )
+        };
+        if let Some(r) = rel.first() {
+            let f = frame_of(*r);
+            mat.setFrame(crate::app::coordinates::inset_rect(f, -6.0, -6.0));
+            canvas.setFrame(f);
+        }
+        let ts = bar.fitting();
+        bar.setFrame(CGRect::new(
+            CGPoint::new(((w - ts.width) / 2.0).round(), (TOOLBAR_H - ts.height - 4.0).max(4.0)),
+            ts,
+        ));
+        bar.did_layout();
+    }
+
     fn make(item: &ClipItem, image: CFRetained<CGImage>) -> Retained<Self> {
-        let vf = objc2_app_kit::NSScreen::mainScreen(MainThreadMarker::new().expect("main"))
+        let mtm = MainThreadMarker::new().expect("main thread");
+        let screen = objc2_app_kit::NSScreen::mainScreen(mtm);
+        let vf = screen
+            .as_ref()
             .map(|s| s.visibleFrame())
             .unwrap_or(CGRect::new(CGPoint::ZERO, CGSize::new(1440.0, 900.0)));
-        let scale = objc2_app_kit::NSScreen::mainScreen(MainThreadMarker::new().expect("main"))
-            .map(|s| s.backingScaleFactor())
-            .unwrap_or(2.0);
+        let scale = screen.as_ref().map(|s| s.backingScaleFactor()).unwrap_or(2.0);
         let natural = CGSize::new(
             CGImage::width(Some(&image)) as f64 / scale,
             CGImage::height(Some(&image)) as f64 / scale,
         );
-        let fit = ((vf.size.width * 0.8 - 80.0) / natural.width).min((vf.size.height * 0.8 - 200.0) / natural.height);
-        let k = fit.min(1.0_f64.max(360.0 / natural.width.max(natural.height)));
-        let canvas_size = CGSize::new((natural.width * k).round(), (natural.height * k).round());
-        let pad = 40.0;
-        let bar_h = 56.0 + 84.0; // toolbar + room for the sub bar
-        let rect = CGRect::new(
-            CGPoint::ZERO,
-            CGSize::new((canvas_size.width + pad * 2.0).max(900.0), canvas_size.height + pad + 44.0 + bar_h),
-        );
-        let mtm = MainThreadMarker::new().expect("main thread");
+        let (win, canvas_rect) = editor_geometry(natural, vf);
+        let rect = CGRect::new(CGPoint::ZERO, win);
         let this = mtm.alloc::<ImageEditorWindow>().set_ivars(ImageEditorIvars {
             state: RefCell::new(None),
             canvas: RefCell::new(None),
             toolbar: RefCell::new(None),
+            mat: RefCell::new(None),
+            natural: RefCell::new(None),
+            rel: RefCell::new(Vec::new()),
         });
         let this: Retained<Self> = unsafe {
             msg_send![
@@ -227,6 +391,7 @@ impl ImageEditorWindow {
                 initWithContentRect: rect,
                 styleMask: NSWindowStyleMask::Titled
                     | NSWindowStyleMask::Closable
+                    | NSWindowStyleMask::Resizable
                     | NSWindowStyleMask::FullSizeContentView,
                 backing: NSBackingStoreType::Buffered,
                 defer: false
@@ -238,19 +403,21 @@ impl ImageEditorWindow {
             unsafe { objc2_app_kit::NSAppearanceNameDarkAqua },
         ).expect("dark aqua")));
         this.setBackgroundColor(Some(&theme::ground()));
+        this.setMinSize(CGSize::new(600.0, 360.0));
         unsafe { this.setReleasedWhenClosed(false) };
 
         let content = crate::annotate::ocr_panel::ground_view_export(rect);
+        content.setAutoresizingMask(
+            objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable
+                | objc2_app_kit::NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
         this.setContentView(Some(&content));
 
-        // Paper mat + shadow behind the picture.
-        let canvas_frame = CGRect::new(
-            CGPoint::new(
-                ((rect.size.width - canvas_size.width) / 2.0).round(),
-                bar_h + 20.0,
-            ),
-            canvas_size,
-        );
+        // Paper mat + shadow behind the picture, on the frame `editor_geometry`
+        // chose: centered between the toolbar column and the titlebar strip,
+        // which is what keeps the top of a height-clamped window from cutting
+        // the picture off.
+        let canvas_frame = canvas_rect;
         let border = CanvasMatView::new(crate::app::coordinates::inset_rect(canvas_frame, -6.0, -6.0));
         content.addSubview(&*border);
 
@@ -262,12 +429,21 @@ impl ImageEditorWindow {
         bar.setFrame(CGRect::new(
             CGPoint::new(
                 ((rect.size.width - ts.width) / 2.0).round(),
-                bar_h - ts.height - 4.0,
+                TOOLBAR_H - ts.height - 4.0,
             ),
             ts,
         ));
         content.addSubview(&bar);
         bar.did_layout();
+        // Remember the unscaled picture frame so `layout` can rescale the
+        // arrangement on every resize.
+        *this.ivars().natural.borrow_mut() = Some(canvas_frame.size);
+        *this.ivars().rel.borrow_mut() = vec![(0.0, 0.0, 1.0, 1.0)];
+        *this.ivars().mat.borrow_mut() = Some(border.clone());
+        // Also keep them on the window for the self-test's geometry read; the
+        // live path only needs the copies inside `state`.
+        *this.ivars().canvas.borrow_mut() = Some(canvas.clone());
+        *this.ivars().toolbar.borrow_mut() = Some(bar.clone());
 
         let delegate: Retained<ImageEditorWinDelegate> = {
             let d = mtm.alloc::<ImageEditorWinDelegate>().set_ivars(ImageEditorWinDelegateIvars {
@@ -282,6 +458,7 @@ impl ImageEditorWindow {
             window: RefCell::new(Some(this.clone())),
             canvas: RefCell::new(Some(canvas.clone())),
             toolbar: RefCell::new(Some(bar.clone())),
+            mat: RefCell::new(Some(border.clone())),
             reopen_shelf: RefCell::new(false),
         });
         canvas.set_delegate(Box::new(EditorDelegate(state)));
@@ -290,8 +467,12 @@ impl ImageEditorWindow {
             window: RefCell::new(Some(this.clone())),
             canvas: RefCell::new(Some(canvas.clone())),
             toolbar: RefCell::new(Some(bar)),
+            mat: RefCell::new(Some(border)),
             reopen_shelf: RefCell::new(false),
         }));
+        // Open centered on the screen the shelf was on; without it the window
+        // landed at its own rect origin, the bottom-left corner.
+        this.center();
         this
     }
 }

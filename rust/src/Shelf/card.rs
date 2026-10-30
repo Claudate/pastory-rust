@@ -34,6 +34,8 @@ pub const CARD_W: f64 = 288.0;
 pub const STUB_H: f64 = 96.0;
 const CAPTION_H: f64 = 44.0;
 const HEADER_RULE_Y: f64 = 60.0;
+/// Card body top when there is no title row (the rule's own y + 1).
+pub(crate) const BODY_TOP: f64 = HEADER_RULE_Y + 1.0;
 /// Title block total height (titleRowHeight 26 + top 4 + bottom 2).
 const TITLE_ROW_H: f64 = 32.0;
 /// H pad on both card texts and rules; the photo print uses 16/14 instead.
@@ -118,7 +120,7 @@ pub fn action_rects(ticket: CGRect, kind: ClipKind) -> Vec<(ActionKind, CGRect)>
 /// punched a notch into even-indexed cards; a uniform shape is what makes a
 /// shelf of cards read as one list rather than as stationery.
 pub fn card_path(ticket: CGRect) -> Retained<NSBezierPath> {
-    theme::rounded_rect(ticket, theme::RADIUS_CARD)
+    theme::rounded_rect(ticket, theme::radius_card())
 }
 
 /// Title-row rect (still used for the inline editor placement).
@@ -656,39 +658,25 @@ fn photo(ticket: CGRect, d: &CardData, top: f64, bottom: f64, img: &CGImage) {
     if px_w <= 0.0 || px_h <= 0.0 {
         return;
     }
-    // Image fit: (288 - 2*16 - 2*7) wide, (content - 2*14 - 2*7) tall at most.
-    let avail_inner_w = CARD_W - 2.0 * 16.0 - 14.0;
-    let avail_inner_h = (bottom - top - 2.0 * 14.0 - 14.0).max(0.0);
-    let scale = (avail_inner_w / px_w).min(avail_inner_h / px_h);
-    let iw = px_w * scale;
-    let ih = px_h * scale;
     // Title-less image/video cards center vertically; with a title (or text
     // kinds) the thumbnail starts at the 16/14 padding.
-    let has_title = d
+    let title = d
         .item
         .title
         .as_deref()
         .map(|t| !t.is_empty())
         .unwrap_or(false);
-    let (px, py) = if !has_title {
-        (
-            x0 + (CARD_W - iw) / 2.0,
-            top + 14.0 + ((bottom - top - 28.0 - ih) / 2.0).max(0.0),
-        )
-    } else {
-        (x0 + 16.0, top + 14.0)
-    };
-    let photo = CGRect::new(CGPoint::new(px, py), CGSize::new(iw, ih));
+    let photo = photo_rect_impl(x0, top, bottom, title, px_w, px_h);
     let center = CGPoint::new(photo.mid().x, photo.mid().y);
     // A soft shadow under the well, then the image clipped to the same
     // rounded box — no print border, no tilt.
     NSGraphicsContext::saveGraphicsState_class();
     shadow(&NSColor::blackColor().colorWithAlphaComponent(0.22), 8.0, 0.0, 3.0).set();
     theme::surface_alt().setFill();
-    theme::rounded_rect(photo, theme::RADIUS_CONTROL).fill();
+    theme::rounded_rect(photo, theme::radius_control()).fill();
     NSGraphicsContext::restoreGraphicsState_class();
     NSGraphicsContext::saveGraphicsState_class();
-    theme::rounded_rect(photo, theme::RADIUS_CONTROL).addClip();
+    theme::rounded_rect(photo, theme::radius_control()).addClip();
     let nsimg = NSImage::initWithCGImage_size(NSImage::alloc(), img, CGSize::new(px_w, px_h));
     draw_image(&nsimg, photo, objc2_app_kit::NSCompositingOperation::SourceOver, 1.0);
     if d.item.kind == ClipKind::Video {
@@ -711,6 +699,37 @@ fn photo(ticket: CGRect, d: &CardData, top: f64, bottom: f64, img: &CGImage) {
         }
     }
     NSGraphicsContext::restoreGraphicsState_class();
+}
+
+/// The picture's own rect on a card, so a click on the picture is exactly a
+/// click on what is drawn: `top` is the card's body top (`content_top`) and
+/// `title` says whether a title pushed the well to the left padding.
+/// `CGRect::ZERO` when the image has no pixels to fit.
+pub(crate) fn photo_rect(ticket: CGRect, top: f64, title: bool, img: &CGImage) -> CGRect {
+    let px_w = CGImage::width(Some(img)) as f64;
+    let px_h = CGImage::height(Some(img)) as f64;
+    if px_w <= 0.0 || px_h <= 0.0 {
+        return CGRect::ZERO;
+    }
+    photo_rect_impl(ticket.min().x, top, ticket.max().y - STUB_H - 1.0, title, px_w, px_h)
+}
+
+/// Image fit: (288 - 2*16 - 2*7) wide, (content - 2*14 - 2*7) tall at most.
+fn photo_rect_impl(x0: f64, top: f64, bottom: f64, title: bool, px_w: f64, px_h: f64) -> CGRect {
+    let avail_inner_w = CARD_W - 2.0 * 16.0 - 14.0;
+    let avail_inner_h = (bottom - top - 2.0 * 14.0 - 14.0).max(0.0);
+    let scale = (avail_inner_w / px_w).min(avail_inner_h / px_h);
+    let iw = px_w * scale;
+    let ih = px_h * scale;
+    let (px, py) = if !title {
+        (
+            x0 + (CARD_W - iw) / 2.0,
+            top + 14.0 + ((bottom - top - 28.0 - ih) / 2.0).max(0.0),
+        )
+    } else {
+        (x0 + 16.0, top + 14.0)
+    };
+    CGRect::new(CGPoint::new(px, py), CGSize::new(iw, ih))
 }
 
 /// The hairline between the card body and the action stub.

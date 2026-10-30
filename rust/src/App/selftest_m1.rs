@@ -30,7 +30,7 @@ fn report(ok: &mut bool, name: &str, cond: bool) {
     *ok &= cond;
 }
 
-fn clear_store() {
+pub(crate) fn clear_store() {
     store::with(|s| {
         let ids: Vec<String> = s.items.iter().map(|i| i.id.clone()).collect();
         s.remove_ids(&ids);
@@ -55,7 +55,7 @@ fn pump(seconds: f64) {
 }
 
 /// An RGBA8 bitmap encoded as PNG, pixel values from `px`, in `space`.
-fn bitmap_png(
+pub(crate) fn bitmap_png(
     w: usize,
     h: usize,
     space: &cg::CGColorSpace,

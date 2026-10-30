@@ -58,12 +58,16 @@ define_class!(
     unsafe impl NSObjectProtocol for NoteWindow {}
 
     impl NoteWindow {
-        #[unsafe(method(canBecomeKey))]
+        // ObjC names: a note is never key nor main (the shelf panel keeps the
+        // keyboard while a note is being dragged). `canBecomeKey` /
+        // `canBecomeMain` are the Swift property spellings and override
+        // nothing.
+        #[unsafe(method(canBecomeKeyWindow))]
         fn ns_can_become_key(&self) -> objc2::runtime::Bool {
             false.into()
         }
 
-        #[unsafe(method(canBecomeMain))]
+        #[unsafe(method(canBecomeMainWindow))]
         fn ns_can_become_main(&self) -> objc2::runtime::Bool {
             false.into()
         }

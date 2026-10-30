@@ -28,10 +28,19 @@ pub struct OcrPanel {
     panel: RefCell<Option<Retained<NSPanel>>>,
     text_view: RefCell<Option<Retained<NSTextView>>>,
     status: RefCell<Option<Retained<NSTextField>>>,
+    /// Placed by `layout`, not once in `ensure_panel` — the panel is resizable
+    /// and its size follows the amount of recognized text.
+    heading: RefCell<Option<Retained<NSTextField>>>,
+    scroll: RefCell<Option<Retained<NSScrollView>>>,
+    copy: RefCell<Option<Retained<objc2_app_kit::NSButton>>>,
+    cancel: RefCell<Option<Retained<objc2_app_kit::NSButton>>>,
     on_copy: RefCell<Option<Box<dyn Fn(String) + 'static>>>,
     /// Which capture asked for this text; a later capture must not inherit it.
     token: Cell<u64>,
     task_gen: Cell<u64>,
+    /// Screen rect the panel was anchored to, so a content-sized resize can
+    /// re-place it (`place(_:near:)`).
+    anchor: RefCell<Option<CGRect>>,
     delegate_obj: RefCell<Option<Retained<OcrPanelWinDelegate>>>,
 }
 
@@ -43,9 +52,14 @@ pub fn controller() -> &'static OcrPanel {
             panel: RefCell::new(None),
             text_view: RefCell::new(None),
             status: RefCell::new(None),
+            heading: RefCell::new(None),
+            scroll: RefCell::new(None),
+            copy: RefCell::new(None),
+            cancel: RefCell::new(None),
             on_copy: RefCell::new(None),
             token: Cell::new(0),
             task_gen: Cell::new(0),
+            anchor: RefCell::new(None),
             delegate_obj: RefCell::new(None),
         };
         Box::into_raw(Box::new(c)) as usize
@@ -55,6 +69,17 @@ pub fn controller() -> &'static OcrPanel {
 }
 
 impl OcrPanel {
+    /// Self-test hook: the live window, so a test can check the panel actually
+    /// took the keyboard instead of only reading the text back out of it.
+    pub(crate) fn selftest_window(&self) -> Option<Retained<NSPanel>> {
+        self.panel.borrow().clone()
+    }
+
+    /// Self-test hook: the text view the recognized text lands in.
+    pub(crate) fn selftest_text_view(&self) -> Option<Retained<NSTextView>> {
+        self.text_view.borrow().clone()
+    }
+
     pub fn token(&self) -> u64 {
         self.token.get()
     }
@@ -102,18 +127,32 @@ impl OcrPanel {
             st.setStringValue(&NSString::from_str(&l("识别中…")));
         }
         p.setLevel(above_picker_level());
+        *self.anchor.borrow_mut() = Some(anchor);
+        // A first, content-shaped size before the text lands (the result pass
+        // resizes again once it knows how much there is).
+        self.size_to_content(0);
         Self::place(&p, anchor);
         p.orderFrontRegardless();
-        unsafe {
-            // SAFETY: makeKey has no generated binding.
-            let _: () = msg_send![&*p, makeKey];
-        }
+        // Take the keyboard so the recognized text can be edited in place.
+        //
+        // This used to be `msg_send![p, makeKey]`, which is not an NSWindow
+        // selector at all (`-makeKeyWindow` is; the header lists
+        // makeKeyAndOrderFront: and makeKeyWindow). The panel is the one
+        // window whose show() nobody had run in a self-test — `ocrpanel`
+        // renders `debugView` — so the unrecognized selector waited until a
+        // real 识别文字 click and aborted the process there.
+        p.makeKeyWindow();
         // New task cancels the old generation. OCR runs off-main (Vision is
         // thread-safe); the result hops back to the main queue.
         self.task_gen.set(self.task_gen.get() + 1);
         let gen = self.task_gen.get();
         std::thread::spawn(move || {
-            let text = crate::annotate::ocr::recognize(&image).unwrap_or_default();
+            // Ours is a bare std thread, so nothing drains the autoreleased
+            // Vision objects `recognize` makes; a pool keeps the one image's
+            // worth of them from accumulating on the process.
+            let text = objc2::rc::autoreleasepool(|_pool| {
+                crate::annotate::ocr::recognize(&image).unwrap_or_default()
+            });
             let raw = Box::into_raw(Box::new(text)) as usize;
             crate::app::delegate::dispatch_main_async(Box::new(move || {
                 if gen != controller().task_gen.get() {
@@ -146,6 +185,16 @@ impl OcrPanel {
                 p.makeFirstResponder(resp);
             }
         }
+        // Size the panel to the amount of text it now holds, then re-anchor it
+        // next to the capture the same way `place` did on open.
+        self.size_to_content(result.chars().count());
+        let (panel, anchor) = (
+            self.panel.borrow().clone(),
+            *self.anchor.borrow(),
+        );
+        if let (Some(p), Some(a)) = (panel, anchor) {
+            Self::place(&p, a);
+        }
     }
 
     /// Self-test only (`debugView`): laid-out content with a sample result.
@@ -170,6 +219,11 @@ impl OcrPanel {
             return p.clone();
         }
         let mtm = MainThreadMarker::new().expect("main thread");
+        // Deliberately a stock `NSPanel`: this one is *titled*, and a titled
+        // panel already answers YES to `canBecomeKeyWindow` even with
+        // `NonactivatingPanel` (measured: `--selftest ocrkeyboard` prints the
+        // stock answer as its control). The shelf's borderless panel is the
+        // one that needs the override.
         let p = {
             let alloc = NSPanel::alloc(mtm);
             NSPanel::initWithContentRect_styleMask_backing_defer(
@@ -205,16 +259,12 @@ impl OcrPanel {
 
         let (w, h) = (400.0f64, 350.0f64);
         let content = make_ground_view(CGRect::new(CGPoint::ZERO, CGSize::new(w, h)));
-        // heading 识别文字 (script 24) at top-left (18, 30 from top).
+        // heading 识别文字 (script 24) — placed by `layout` at the end.
         let heading = make_label(&l("识别文字"));
         heading.setFont(Some(&theme::script(24.0)));
         heading.setTextColor(Some(&theme::label()));
-        let head_h = crate::shelf::card::line_height(&theme::script(24.0));
-        heading.setFrame(CGRect::new(
-            CGPoint::new(18.0, h - 30.0 - head_h),
-            CGSize::new(200.0, head_h),
-        ));
         content.addSubview(&heading);
+        *self.heading.borrow_mut() = Some(heading);
 
         // paper scroll with the text.
         let scroll = NSScrollView::new(mtm);
@@ -240,24 +290,14 @@ impl OcrPanel {
             c.setWidthTracksTextView(true);
         }
         scroll.setDocumentView(Some(&tv));
-        let btn_y = 12.0;
-        let btn_h = 34.0;
-        let top_of_scroll = h - 30.0 - head_h - 8.0;
-        scroll.setFrame(CGRect::new(
-            CGPoint::new(14.0, btn_y + btn_h + 12.0),
-            CGSize::new(w - 28.0, top_of_scroll - (btn_y + btn_h + 12.0)),
-        ));
         content.addSubview(&scroll);
         *self.text_view.borrow_mut() = Some(tv);
+        *self.scroll.borrow_mut() = Some(scroll);
 
         // status (left), 关闭 + 复制文字 (right).
         let st = make_label("");
         st.setFont(Some(&theme::serif(13.0, false)));
         st.setTextColor(Some(&theme::label_tertiary()));
-        st.setFrame(CGRect::new(
-            CGPoint::new(18.0, btn_y + (btn_h - 16.0) / 2.0),
-            CGSize::new(200.0, 16.0),
-        ));
         content.addSubview(&st);
         *self.status.borrow_mut() = Some(st);
 
@@ -283,16 +323,120 @@ impl OcrPanel {
             Some(delegate_obj),
             sel!(closeTapped:),
         );
-        let cancel_w = cancel.frame().size.width;
-        let copy_w = copy.frame().size.width;
-        copy.setFrameOrigin(CGPoint::new(w - 14.0 - copy_w, btn_y));
-        cancel.setFrameOrigin(CGPoint::new(w - 14.0 - copy_w - 8.0 - cancel_w, btn_y));
         content.addSubview(&cancel);
         content.addSubview(&copy);
+        *self.copy.borrow_mut() = Some(copy);
+        *self.cancel.borrow_mut() = Some(cancel);
 
         p.setContentView(Some(&content));
         *self.panel.borrow_mut() = Some(p.clone());
+        self.layout(w, h);
         p
+    }
+
+    /// Place every piece against the current content box. Called once from
+    /// `ensure_panel`, on every `windowDidResize:`, and whenever the panel is
+    /// re-sized to its content — the one place the geometry lives.
+    pub(crate) fn layout(&self, w: f64, h: f64) {
+        let head_h = crate::shelf::card::line_height(&theme::script(24.0));
+        if let Some(heading) = self.heading.borrow().as_ref() {
+            heading.setFrame(CGRect::new(
+                CGPoint::new(18.0, h - 30.0 - head_h),
+                CGSize::new((w - 36.0).max(40.0), head_h),
+            ));
+        }
+        let btn_y = 12.0;
+        let btn_h = 34.0;
+        let copy_w = self
+            .copy
+            .borrow()
+            .as_ref()
+            .map(|b| b.frame().size.width)
+            .unwrap_or(0.0);
+        let cancel_w = self
+            .cancel
+            .borrow()
+            .as_ref()
+            .map(|b| b.frame().size.width)
+            .unwrap_or(0.0);
+        if let Some(copy) = self.copy.borrow().as_ref() {
+            copy.setFrameOrigin(CGPoint::new(w - 14.0 - copy_w, btn_y));
+        }
+        if let Some(cancel) = self.cancel.borrow().as_ref() {
+            cancel.setFrameOrigin(CGPoint::new(w - 14.0 - copy_w - 8.0 - cancel_w, btn_y));
+        }
+        let top_of_scroll = h - 30.0 - head_h - 8.0;
+        let scroll_y = btn_y + btn_h + 12.0;
+        let scroll_h = (top_of_scroll - scroll_y).max(40.0);
+        let scroll_w = (w - 28.0).max(60.0);
+        if let Some(scroll) = self.scroll.borrow().as_ref() {
+            scroll.setFrame(CGRect::new(
+                CGPoint::new(14.0, scroll_y),
+                CGSize::new(scroll_w, scroll_h),
+            ));
+            // The text view tracks the box's width and grows downward with its
+            // content, so the document height comes from the box.
+            if let Some(tv) = self.text_view.borrow().as_ref() {
+                let box_size = scroll.contentSize();
+                let mut f = tv.frame();
+                f.size.width = box_size.width;
+                f.size.height = f.size.height.max(box_size.height);
+                tv.setMinSize(CGSize::new(0.0, box_size.height));
+                tv.setFrame(f);
+            }
+        }
+        if let Some(st) = self.status.borrow().as_ref() {
+            let sw = (w - 14.0 - copy_w - 8.0 - cancel_w - 8.0 - 18.0).max(60.0);
+            st.setFrame(CGRect::new(
+                CGPoint::new(18.0, btn_y + (btn_h - 16.0) / 2.0),
+                CGSize::new(sw, 16.0),
+            ));
+        }
+    }
+
+    /// A height that fits roughly `n_chars` characters of serif 15 text: the
+    /// heading, the buttons and a scroll box sized to the line count.
+    fn height_for_text(&self, n_chars: usize, w: f64) -> f64 {
+        let head_h = crate::shelf::card::line_height(&theme::script(24.0));
+        let inner_w = (w - 28.0 - 28.0).max(80.0);
+        // Avg advance of serif 15 on a CJK/Latin mix, a little generous.
+        let per_line = (inner_w / 8.2).max(12.0);
+        let lines = ((n_chars as f64) / per_line).ceil().max(1.0);
+        let scroll_h = (lines * 20.0 + 30.0).clamp(120.0, 460.0);
+        let top = 30.0 + head_h + 8.0;
+        let bottom = 12.0 + 34.0 + 12.0;
+        top + scroll_h + bottom
+    }
+
+    /// Resize the panel to the content for `n_chars` (clamped by the screen
+    /// and the 180pt minimum), then re-lay it out.
+    fn size_to_content(&self, n_chars: usize) {
+        let Some(p) = self.panel.borrow().clone() else { return };
+        let mtm = MainThreadMarker::new().expect("main thread");
+        let w = p
+            .contentView()
+            .map(|c| c.bounds().size.width)
+            .unwrap_or(400.0)
+            .max(280.0);
+        let cap = screens_intersecting(mtm, p.frame())
+            .map(|s| s.visibleFrame().size.height - 60.0)
+            .unwrap_or(720.0);
+        let h = self.height_for_text(n_chars, w).min(cap).max(180.0);
+        p.setContentSize(CGSize::new(w, h));
+        self.layout(w, h);
+    }
+
+    /// Self-test hook: force a content size, run `layout`, and report the
+    /// scroll box as `(x, y, w, h)` — so a resize that did nothing reads as
+    /// the box still at its 400×350 frame.
+    pub(crate) fn debug_layout_at(&self, w: f64, h: f64) -> Option<(f64, f64, f64, f64)> {
+        let p = self.panel.borrow().clone()?;
+        if let Some(content) = p.contentView() {
+            content.setFrame(CGRect::new(CGPoint::ZERO, CGSize::new(w, h)));
+        }
+        self.layout(w, h);
+        let s = self.scroll.borrow().as_ref()?.frame();
+        Some((s.min().x, s.min().y, s.size.width, s.size.height))
     }
 
     /// `place(_:near:)` — right of the anchor, left if that overflows.
@@ -404,6 +548,19 @@ define_class!(
         fn window_will_close(&self, _notification: &objc2_foundation::NSNotification) {
             // Swift: task?.cancel() on close.
             controller().task_gen.replace(controller().task_gen.get() + 1);
+        }
+
+        /// Resizable panel: every piece is re-placed against the new box
+        /// (before this the children kept their 400×350 frames).
+        #[unsafe(method(windowDidResize:))]
+        fn window_did_resize(&self, _notification: &objc2_foundation::NSNotification) {
+            let c = controller();
+            if let Some(p) = c.panel.borrow().as_ref() {
+                if let Some(content) = p.contentView() {
+                    let b = content.bounds().size;
+                    c.layout(b.width, b.height);
+                }
+            }
         }
     }
 );

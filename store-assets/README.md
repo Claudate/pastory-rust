@@ -382,3 +382,16 @@ export PROVISION_PROFILE=~/Downloads/PasteJar_MAS.provisionprofile
 
 > 账号：截图里的 Apple ID 是 `goodjackwork@gmail.com`，团队 `HA7KN8S95K`。
 > 该账号必须是 App Store Connect 里 **Admin 或 App Manager**，否则上传会报 401/403。
+
+---
+
+## 2026-10-30 订正
+
+上面第 7 节「上传前的硬性阻塞项」有两处已过时，以本节为准：
+
+- **#1 installer 证书**：在。判定要用 `security find-identity -v`（**不带** `-p codesigning`），
+  codesigning policy 会把 installer 证书滤掉，看起来像「没有」。
+- **#2 profile**：`~/Library/MobileDevice/Provisioning Profiles/` 现在是**空目录**（EasyAgent 那份也已不在）。
+  `.pkg` 签名在 2026-10-28 复测时已能出（EPERM 未复现），别再引用「签不出 pkg」的旧结论。
+- **#3/#4/#5 现在可脚本化**：证书、App ID、ASC 记录、profile、上传都有脚本覆盖，
+  不用再去门户点菜单。一条命令：`./MAS-上架.command`；说明见 [../docs/MAS_AUTO.md](../docs/MAS_AUTO.md)。

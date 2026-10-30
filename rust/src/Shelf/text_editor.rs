@@ -10,8 +10,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSAppearanceCustomization, NSBackingStoreType, NSScrollView, NSTextField, NSTextView,
-    NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask, };
+    NSAppearanceCustomization, NSBackingStoreType, NSButton, NSScrollView, NSTextField,
+    NSTextView, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask, };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSAttributedStringKey, NSNotification, NSString};
 
@@ -119,7 +119,11 @@ pub struct TextEditorIvars {
     item_id: RefCell<String>,
     text_view: RefCell<Option<Retained<NSTextView>>>,
     title: RefCell<Option<Retained<TitleField>>>,
+    title_wrap: RefCell<Option<Retained<TitleSheetView>>>,
+    scroll: RefCell<Option<Retained<NSScrollView>>>,
     count: RefCell<Option<Retained<NSTextField>>>,
+    cancel: RefCell<Option<Retained<NSButton>>>,
+    save: RefCell<Option<Retained<NSButton>>>,
     /// Whether to re-open the shelf after close (`reopenShelf`).
     reopen_shelf: RefCell<bool>,
     delegate: RefCell<Option<Retained<WindowAndTextDelegate>>>,
@@ -180,19 +184,73 @@ impl TextEditorWindow {
         map.insert(item.id.clone(), e.clone());
         *e.ivars().reopen_shelf.borrow_mut() = crate::shelf::panel::is_visible();
         crate::shelf::panel::hide();
-        activate_app();
+        // The strip must not climb back over this window (`external_hold`).
+        crate::shelf::line_panel::external_window_opened();
+        crate::app::activation::activate_app();
         e.makeKeyAndOrderFront(None);
+    }
+
+    /// Self-test only: is the live editor for `id` the key window? The renders
+    /// above never show a window, so they cannot answer this.
+    pub fn debug_window_is_key(id: &str) -> Option<bool> {
+        open_map().get(id).map(|w| w.isKeyWindow())
+    }
+
+    /// Self-test only: close the live editor for `id` (the cancel button's route).
+    pub fn debug_close(id: &str) {
+        if let Some(w) = open_map().get(id) {
+            w.close();
+        }
     }
 
     /// Self-test only: the content view, laid out, without showing the window.
     pub fn debug_view(item: &ClipItem) -> Option<Retained<NSView>> {
+        Self::debug_view_sized(item, None)
+    }
+
+    /// Self-test only: the same content view, forced to `size` and re-laid-out
+    /// through the resize path — the difference between "placed once in
+    /// `make`" and "follows the window", which the 620pt render cannot show.
+    pub(crate) fn debug_view_sized(
+        item: &ClipItem,
+        size: Option<CGSize>,
+    ) -> Option<Retained<NSView>> {
         let e = Self::make(item);
         open_map().insert(item.id.clone(), e.clone());
-        let cv = e.contentView();
-        match cv {
-            Some(v) => Some(v),
-            None => None,
+        if let (Some(v), Some(s)) = (e.contentView(), size) {
+            v.setFrame(CGRect::new(CGPoint::ZERO, s));
+            e.layout_content();
+            e.update_count();
         }
+        e.contentView()
+    }
+
+    /// Self-test only: build the editor, run the resize path for a content box
+    /// of `size`, and report every placed frame as `(name, x, y, w, h)` — so a
+    /// resize that does nothing reads as frames still at the 620pt origin.
+    pub(crate) fn debug_layout_at(
+        item: &ClipItem,
+        size: CGSize,
+    ) -> Vec<(&'static str, f64, f64, f64, f64)> {
+        let e = Self::make(item);
+        open_map().insert(item.id.clone(), e.clone());
+        if let Some(v) = e.contentView() {
+            v.setFrame(CGRect::new(CGPoint::ZERO, size));
+        }
+        e.layout_content();
+        let mut out: Vec<(&'static str, f64, f64, f64, f64)> = Vec::new();
+        let mut push = |name: &'static str, f: Option<CGRect>| {
+            if let Some(f) = f {
+                out.push((name, f.min().x, f.min().y, f.size.width, f.size.height));
+            }
+        };
+        push("sheet", e.ivars().title_wrap.borrow().as_ref().map(|v| v.frame()));
+        push("field", e.ivars().title.borrow().as_ref().map(|v| v.frame()));
+        push("scroll", e.ivars().scroll.borrow().as_ref().map(|v| v.frame()));
+        push("count", e.ivars().count.borrow().as_ref().map(|v| v.frame()));
+        push("cancel", e.ivars().cancel.borrow().as_ref().map(|v| v.frame()));
+        push("save", e.ivars().save.borrow().as_ref().map(|v| v.frame()));
+        out
     }
 
     fn make(item: &ClipItem) -> Retained<Self> {
@@ -202,7 +260,11 @@ impl TextEditorWindow {
             item_id: RefCell::new(item.id.clone()),
             text_view: RefCell::new(None),
             title: RefCell::new(None),
+            title_wrap: RefCell::new(None),
+            scroll: RefCell::new(None),
             count: RefCell::new(None),
+            cancel: RefCell::new(None),
+            save: RefCell::new(None),
             reopen_shelf: RefCell::new(false),
             delegate: RefCell::new(None),
         });
@@ -271,6 +333,7 @@ impl TextEditorWindow {
         title_wrap.addSubview(&title_field);
         content.addSubview(&title_wrap);
         *this.ivars().title.borrow_mut() = Some(title_field);
+        *this.ivars().title_wrap.borrow_mut() = Some(title_wrap);
 
         // Body: paper scroll + text view (7pt leading).
         let scroll_rect = CGRect::new(CGPoint::new(16.0, 44.0 + 52.0 + 10.0), CGSize::new(620.0 - 32.0, 460.0 - 44.0 - 52.0 - 10.0 - 14.0 - 44.0));
@@ -318,6 +381,7 @@ impl TextEditorWindow {
         scroll.setDocumentView(Some(&tv));
         tv.setFrame(CGRect::new(CGPoint::ZERO, scroll.contentSize()));
         content.addSubview(&scroll);
+        *this.ivars().scroll.borrow_mut() = Some(scroll);
         // text delegate for the counter
         unsafe {
             let d: Option<&AnyObject> = Some(&*(&*delegate as *const WindowAndTextDelegate as *const AnyObject));
@@ -348,12 +412,93 @@ impl TextEditorWindow {
         place_simple(&*save, 620.0 - 16.0 - sb.width, 14.0, sb.width, sb.height);
         content.addSubview(&cancel);
         content.addSubview(&save);
+        *this.ivars().cancel.borrow_mut() = Some(cancel);
+        *this.ivars().save.borrow_mut() = Some(save);
         this.setContentView(Some(&content));
         this.center();
+        this.layout_content();
         this.update_count();
         this
     }
 
+
+    /// Re-place the sheet, the body scroll and the footer for the window's
+    /// current size. `make` runs it once; every later resize arrives through
+    /// the delegate's `windowDidResize:`. Without it a shorter window cut the
+    /// footer off and a wider one left the sheet at its original 620pt.
+    pub(crate) fn layout_content(&self) {
+        let Some(content) = self.contentView() else { return };
+        let size = content.bounds().size;
+        let (w, h) = (size.width, size.height);
+        /// Titlebar strip the full-size content view runs under.
+        const TOP_INSET: f64 = 44.0;
+        /// Side margin for the sheet and the body.
+        const MARGIN: f64 = 16.0;
+        /// Height of the handwritten title sheet.
+        const SHEET_H: f64 = 52.0;
+        /// Room the count line and the buttons ask for at the bottom.
+        const FOOTER: f64 = 58.0;
+
+        let inner_w = (w - MARGIN * 2.0).max(1.0);
+
+        // The sheet hangs from the top; the body takes whatever is left
+        // between it and the footer, so neither ever leaves the window.
+        let sheet_y = (h - TOP_INSET - SHEET_H).max(FOOTER + 24.0);
+        if let Some(wrap) = self.ivars().title_wrap.borrow().as_ref() {
+            wrap.setFrame(CGRect::new(
+                CGPoint::new(MARGIN, sheet_y),
+                CGSize::new(inner_w, SHEET_H),
+            ));
+        }
+        if let Some(field) = self.ivars().title.borrow().as_ref() {
+            field.setFrame(CGRect::new(
+                CGPoint::new(12.0, (SHEET_H - 36.0) / 2.0),
+                CGSize::new((inner_w - 24.0).max(1.0), 36.0),
+            ));
+        }
+
+        let scroll_h = (sheet_y - 8.0 - FOOTER).max(40.0);
+        if let Some(scroll) = self.ivars().scroll.borrow().as_ref() {
+            scroll.setFrame(CGRect::new(
+                CGPoint::new(MARGIN, FOOTER),
+                CGSize::new(inner_w, scroll_h),
+            ));
+            // The text view tracks the box's width and grows downward with
+            // its content, so the document height comes from the box.
+            if let Some(tv) = self.ivars().text_view.borrow().as_ref() {
+                let box_size = scroll.contentSize();
+                let mut f = tv.frame();
+                f.size.width = box_size.width;
+                f.size.height = f.size.height.max(box_size.height);
+                tv.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable);
+                tv.setMinSize(CGSize::new(0.0, box_size.height));
+                tv.setMaxSize(CGSize::new(f64::MAX / 2.0_f64.sqrt(), f64::MAX / 2.0_f64.sqrt()));
+                tv.setFrame(f);
+            }
+        }
+
+        // Buttons ride the bottom-right corner at their own widths; the
+        // counter gets what is left rather than running under them at the
+        // 420pt minimum.
+        let cancel = self.ivars().cancel.borrow().clone();
+        let save = self.ivars().save.borrow().clone();
+        if let (Some(cancel), Some(save)) = (cancel, save) {
+            let cb = cancel.frame().size;
+            let sb = save.frame().size;
+            place_simple(&*save, w - MARGIN - sb.width, 14.0, sb.width, sb.height);
+            place_simple(
+                &*cancel,
+                w - MARGIN - sb.width - 8.0 - cb.width,
+                14.0,
+                cb.width,
+                cb.height,
+            );
+            if let Some(count) = self.ivars().count.borrow().as_ref() {
+                let cw = (w - MARGIN - sb.width - 8.0 - cb.width - 24.0).max(40.0);
+                place_simple(&*count, 20.0, 14.0, cw, 36.0);
+            }
+        }
+    }
 
     fn content_view_raw(&self) -> Option<Retained<NSView>> {
         self.contentView()
@@ -391,6 +536,7 @@ define_class!(
             let editor: &TextEditorWindow = unsafe { &*(raw as *const TextEditorWindow) };
             let id = editor.ivars().item_id.borrow().clone();
             open_map().remove(&id);
+            crate::shelf::line_panel::external_window_closed();
             if *editor.ivars().reopen_shelf.borrow() {
                 crate::shelf::panel::show();
             }
@@ -398,6 +544,14 @@ define_class!(
     }
 
     impl WindowAndTextDelegate {
+        /// Re-place the sheet / body / footer as the window changes size.
+        #[unsafe(method(windowDidResize:))]
+        fn window_did_resize(&self, _n: &NSNotification) {
+            let raw = *self.ivars().editor.borrow();
+            let editor: &TextEditorWindow = unsafe { &*(raw as *const TextEditorWindow) };
+            editor.layout_content();
+        }
+
         #[unsafe(method(textDidChange:))]
         fn text_did_change(&self, _n: &NSNotification) {
             let raw = *self.ivars().editor.borrow();
@@ -453,16 +607,6 @@ impl TitleSheetView {
 
 fn place_simple(view: &NSView, x: f64, y: f64, w: f64, h: f64) {
     view.setFrame(CGRect::new(CGPoint::new(x, y), CGSize::new(w, h)));
-}
-
-fn activate_app() {
-    let mtm = MainThreadMarker::new().expect("main thread");
-    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-    unsafe {
-        let _: () = msg_send![&app, activate];
-    }
-    #[allow(deprecated)]
-    app.activateIgnoringOtherApps(true);
 }
 
 

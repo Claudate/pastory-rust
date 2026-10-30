@@ -78,3 +78,26 @@ pub fn init() {
 pub fn launch() -> &'static Launch {
     LAUNCH.get().expect("sandbox::init() must run before use")
 }
+
+/// The frozen launch state when `init` has run. Drawing code is reachable from
+/// unit tests, which never launch, so anything that a test can hit must ask
+/// here rather than through `launch()`.
+pub fn try_launch() -> Option<&'static Launch> {
+    LAUNCH.get()
+}
+
+/// A `PASTORY_*` self-test switch. A normal launch ignores the environment
+/// entirely, so this answers `None` there; with no frozen launch (unit tests)
+/// it reads the live process, which is where a self-test subprocess is too.
+pub fn self_test_var(key: &str) -> Option<String> {
+    if let Some(launch) = try_launch() {
+        if !launch.is_self_test() {
+            return None;
+        }
+        return env_get(&launch.env, key).map(|s| s.to_string());
+    }
+    if !is_self_test(&env::args().collect::<Vec<_>>()) {
+        return None;
+    }
+    env::var(key).ok()
+}

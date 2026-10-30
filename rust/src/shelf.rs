@@ -29,3 +29,13 @@ pub mod how_to_card;
 pub mod welcome_card;
 #[path = "Shelf/contact_pane.rs"]
 pub mod contact_pane;
+#[path = "Shelf/image_viewer.rs"]
+pub mod image_viewer;
+#[path = "Shelf/line_card.rs"]
+pub mod line_card;
+#[path = "Shelf/line_view.rs"]
+pub mod line_view;
+#[path = "Shelf/line_panel.rs"]
+pub mod line_panel;
+#[path = "Shelf/item_actions.rs"]
+pub mod item_actions;

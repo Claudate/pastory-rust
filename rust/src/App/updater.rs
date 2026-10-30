@@ -105,6 +105,16 @@ pub fn is_newer(a: &str, than_b: &str) -> bool {
     false
 }
 
+/// The build this binary was compiled from — `<short-hash>[-dirty] · <time>`,
+/// baked in by `rust/build.rs`.
+///
+/// [`current_version`] cannot distinguish two local builds (every rebuild of
+/// 1.0.7 reports "1.0.7"), so this is the only way a user can tell which
+/// binary the running instance actually is.
+pub fn build_stamp() -> &'static str {
+    env!("PASTORY_BUILD_STAMP")
+}
+
 /// Release notes are Markdown with the Chinese half first and the English
 /// half after a `---` line. Pick the half for the UI language, drop the
 /// "PasteJar x.y" title line the alert already carries, turn bold/headings/

@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 
 use objc2::rc::Retained;
-use objc2::runtime::NSObjectProtocol;
+use objc2::runtime::{AnyObject, NSObjectProtocol};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSBezierPath, NSEvent, NSView};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
@@ -15,15 +15,17 @@ use objc2_foundation::{NSString, NSURL};
 use crate::app::localization::l;
 use crate::app::theme;
 
+/// 商店版保留这一格（唯一合规的自有入口）；直发版已按用户要求去掉开源地址。
+#[cfg(feature = "mas")]
 pub const REPO_URL: &str = "https://github.com/Claudate/pastory-rust";
 /// 商店版不出现在任何渠道入口（提审约束），见下方 `draw_sheets`。
 #[cfg(not(feature = "mas"))]
-pub const X_URL: &str = "https://x.com/nothingbutcici";
+pub const X_URL: &str = "https://x.com/smithjacky521";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Link {
-    Back,
     Close,
+    #[cfg(feature = "mas")]
     Repo,
     #[cfg(not(feature = "mas"))]
     X,
@@ -87,11 +89,8 @@ fn contains(r: &CGRect, p: CGPoint) -> bool {
 
 fn run_link(link: Link) {
     match link {
-        Link::Back => {
-            crate::shelf::panel::with_model_mut(|m| m.show_contact = false);
-            crate::shelf::view::refresh();
-        }
         Link::Close => crate::shelf::panel::hide(),
+        #[cfg(feature = "mas")]
         Link::Repo => open_url(REPO_URL),
         #[cfg(not(feature = "mas"))]
         Link::X => open_url(X_URL),
@@ -124,15 +123,14 @@ fn draw(view: &ContactView) {
         &theme::label(),
         None,
     );
-    header_button(view, CGRect::new(CGPoint::new(cx + cw - 200.0, 18.0), CGSize::new(160.0, 36.0)), &format!("‹ {}", l("返回剪贴板")), Link::Back, true);
     header_button(view, CGRect::new(CGPoint::new(cx + cw - 40.0, 18.0), CGSize::new(40.0, 36.0)), "✕", Link::Close, false);
     let top = 18.0 + 44.0 + 14.0;
     draw_sheets(view, cx, top);
 }
 
-/// 联系格子。直发版四栏（微信 / GitHub / X / 买咖啡）；商店版（`mas`）只留
-/// 自有 GitHub 一栏——微信 / X / 买咖啡是第三方或个人渠道，提审时不出现
-/// （见 docs/MAS_PLAN.md §0）。
+/// 联系格子。直发版四栏（微信群 / 个人微信 / X / 买咖啡，开源地址已去掉）；
+/// 商店版（`mas`）只留自有 GitHub 一栏——微信 / X / 买咖啡是第三方或
+/// 个人渠道，提审时不出现（见 docs/MAS_PLAN.md §0）。
 fn draw_sheets(view: &ContactView, cx: f64, top: f64) {
     #[cfg(feature = "mas")]
     {
@@ -144,9 +142,9 @@ fn draw_sheets(view: &ContactView, cx: f64, top: f64) {
         let mut x = cx;
         sheet(view, x, top, &l("反馈 bug & 提功能"), &l("PasteJar 微信小小群，交个朋友"), SheetArt::Qr(theme::resource_named("WeChatGroup.png")));
         x += 246.0;
-        sheet(view, x, top, &l("GitHub 点个 Star 吧"), &l("开源产品，喜欢就请助力一下"), SheetArt::Link("Claudate/pastory-rust", Link::Repo));
+        sheet(view, x, top, &l("加我个人微信"), &l("直接找我聊，备注一下 PasteJar"), SheetArt::Qr(theme::resource_named("WeChatPersonal.png")));
         x += 246.0;
-        sheet(view, x, top, &l("关注我的 X"), &l("新版本和碎碎念都在这。"), SheetArt::Link("@nothingbutcici", Link::X));
+        sheet(view, x, top, &l("关注我的 X"), &l("新版本和碎碎念都在这。"), SheetArt::Link("@smithjacky521", Link::X));
         x += 246.0;
         sheet(view, x, top, "Buy me a coffee", &l("觉得好用，请我喝一杯。"), SheetArt::Qr(theme::resource_named("Coffee.png")));
     }
@@ -184,7 +182,8 @@ fn sheet(view: &ContactView, x: f64, y: f64, title: &str, line: &str, art: Sheet
         objc2_app_kit::NSGraphicsContext::saveGraphicsState_class();
         crate::shelf::card::shadow(&objc2_app_kit::NSColor::blackColor().colorWithAlphaComponent(0.35), 8.0, 1.0, 4.0).set();
         theme::surface().setFill();
-        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, theme::RADIUS_CARD, theme::RADIUS_CARD).fill();
+        let r = theme::radius_card();
+        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, r, r).fill();
         objc2_app_kit::NSGraphicsContext::restoreGraphicsState_class();
     }
     // Section title: plain secondary type, nothing drawn behind it.
@@ -255,4 +254,80 @@ fn sheet(view: &ContactView, x: f64, y: f64, title: &str, line: &str, art: Sheet
             view.ivars().hits.borrow_mut().push((link, cell));
         }
     }
+}
+
+/// Self-test hook: why a hotspot is (not) there. Reports what the
+/// display cycle checks — window visibility, hidden ancestors, the real
+/// frame (bounds alone hide an off-window origin) — so a pane that never
+/// draws tells us which check failed.
+pub fn selftest_diag(view: &ContactView) -> String {
+    let mut chain = String::new();
+    let mut v = unsafe { view.superview() };
+    while let Some(sup) = v {
+        chain.push_str(&format!(
+            " › {}{}",
+            sup.class().name().to_string_lossy(),
+            if sup.isHidden() { "(hidden)" } else { "" }
+        ));
+        // SAFETY: main-thread self-test diagnostics on a live view; the
+        // returned parent (if any) is valid for the loop's next read.
+        v = unsafe { sup.superview() };
+    }
+    let win_state = view
+        .window()
+        .map(|w| {
+            format!(
+                "visible={} occlusion={:?} viewsNeedDisplay={:?} num={} frame={:?}",
+                w.isVisible(),
+                w.occlusionState(),
+                w.viewsNeedDisplay(),
+                w.windowNumber(),
+                w.frame()
+            )
+        })
+        .unwrap_or_else(|| "no-window".into());
+    format!(
+        "hidden={} hidden-ancestor={} win=({}) chain=[{} ] frame={:?} needs={} bounds={:?} hits={}",
+        view.isHidden(),
+        view.isHiddenOrHasHiddenAncestor(),
+        win_state,
+        chain,
+        view.frame(),
+        view.needsDisplay(),
+        view.bounds(),
+        view.ivars().hits.borrow().len(),
+    )
+}
+
+/// Self-test hook: deliver a click at `p` (this view's coordinates) through
+/// the real `mouseUp:` route — hit-testing, `run_link` and whatever that
+/// schedules all run exactly as they do for a user's click.
+pub fn selftest_click_at(view: &ContactView, p: CGPoint) -> bool {
+    let Some(window) = view.window() else {
+        return false;
+    };
+    let loc = view.convertPoint_toView(p, None);
+    let number = window.windowNumber();
+    let event = |kind| {
+        NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            loc,
+            objc2_app_kit::NSEventModifierFlags::empty(),
+            0.0,
+            number,
+            None,
+            0,
+            1,
+            0.0,
+        )
+        .expect("synthetic mouse event")
+    };
+    // SAFETY: `ContactView` is an NSView subclass; this is the same dispatch
+    // AppKit performs for a real click in the pane.
+    let obj: &AnyObject = unsafe { &*(view as *const ContactView as *const AnyObject) };
+    unsafe {
+        let up = event(objc2_app_kit::NSEventType::LeftMouseUp);
+        let _: () = msg_send![obj, mouseUp: &*up];
+    }
+    true
 }
