@@ -14,11 +14,11 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSBezierPath, NSColor, NSEvent, NSGraphicsContext, NSMenu, NSMenuItem, NSProgressIndicator,
+    NSBezierPath, NSEvent, NSGraphicsContext, NSMenu, NSMenuItem, NSProgressIndicator,
     NSScrollView, NSTextField, NSTextView, NSView, NSControlSize, NSProgressIndicatorStyle,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_foundation::{NSArray, NSMutableAttributedString, NSNotification, NSString};
+use objc2_foundation::{NSArray, NSMutableAttributedString, NSNotification, NSRange, NSString};
 
 use crate::app::localization::l;
 use crate::app::theme;
@@ -56,6 +56,11 @@ fn nav_rows() -> [(&'static str, &'static str); 3] {
 pub(crate) struct Ui {
     built: bool,
     root: Option<Retained<ShelfRootView>>,
+    /// The ground layer (panel background image / gradient / sidebar band).
+    /// Its own view, directly above the material: drawn in the root's
+    /// `drawRect` it sat UNDER the glass and the live panel showed neither the
+    /// user's picture nor the skin's gradient.
+    ground: Option<Retained<GroundView>>,
     sidebar: Option<Retained<SidebarView>>,
     header: Option<Retained<HeaderView>>,
     scroll: Option<Retained<NSScrollView>>,
@@ -89,6 +94,7 @@ impl Ui {
         Ui {
             built: false,
             root: None,
+            ground: None,
             sidebar: None,
             header: None,
             scroll: None,
@@ -133,6 +139,11 @@ pub(crate) fn settings_view() -> Option<Retained<crate::shelf::settings_pane::Se
     with_ui(|ui| ui.settings_view.clone())
 }
 
+/// The contact pane while 联系我 is up (the self-tests assert on it).
+pub(crate) fn contact_view() -> Option<Retained<crate::shelf::contact_pane::ContactView>> {
+    with_ui(|ui| ui.contact_view.clone())
+}
+
 /// The welcome card while the first launch shows it (its shortcut recorders).
 pub(crate) fn welcome_view() -> Option<Retained<crate::shelf::welcome_card::WelcomeCardView>> {
     with_ui(|ui| ui.welcome_view.clone())
@@ -140,8 +151,14 @@ pub(crate) fn welcome_view() -> Option<Retained<crate::shelf::welcome_card::Welc
 
 /// Show/hide the settings pane over the content column. An open welcome card
 /// or pane exchange takes precedence; cards/header/footer hide behind the pane.
-fn sync_settings_view(ui: &mut Ui, s: &Snapshot) {
-    let Some(root) = ui.root.clone() else { return };
+///
+/// Returns the search field's pending visibility instead of applying it: the
+/// pane swap runs inside the `with_ui` borrow, and hiding a field that holds
+/// first responder ends its editing synchronously — AppKit answers with
+/// `controlTextDidEndEditing:`, whose delegate reaches back into `with_ui`
+/// and would borrow it twice. apply_snapshot lands it after the borrow.
+fn sync_settings_view(ui: &mut Ui, s: &Snapshot) -> Option<(Retained<NSTextField>, bool)> {
+    let Some(root) = ui.root.clone() else { return None };
     let show = s.show_settings;
     if show {
         if ui.settings_view.is_none() {
@@ -168,6 +185,11 @@ fn sync_settings_view(ui: &mut Ui, s: &Snapshot) {
                 rect.min(),
                 CGSize::new(rect.size.width, rect.size.height),
             ));
+            // A view added to a visible window draws on the next display pass;
+            // the flag only makes that explicit. An occluded window defers it
+            // (the self-tests force a draw through the bitmap path instead) —
+            // in front of the user the pane paints like the settings pane.
+            pane.setNeedsDisplay(true);
             root.addSubview(&pane);
             ui.contact_view = Some(pane);
         }
@@ -194,12 +216,59 @@ fn sync_settings_view(ui: &mut Ui, s: &Snapshot) {
     let pane_open = show || s.show_contact;
     if let Some(scroll) = &ui.scroll { scroll.setHidden(pane_open); }
     if let Some(footer) = &ui.footer { footer.setHidden(pane_open); }
-    if let Some(search) = &ui.search { search.setHidden(pane_open); }
+    let mut hide_search = None;
+    if let Some(search) = &ui.search {
+        if search.isHidden() != pane_open {
+            hide_search = Some((search.clone(), pane_open));
+        }
+    }
+    hide_search
+}
+
+/// The live search field. `--selftest searchtype` drives this real control,
+/// which `searchlive` cannot: it records the query itself. `None` before the
+/// tree is built.
+pub(crate) fn search_field() -> Option<Retained<NSTextField>> {
+    with_ui(|ui| ui.search.clone())
+}
+
+/// The live inline title editor, while a rename is open. The box only exists
+/// during a rename, so `None` is how a self-test tells "the click opened the
+/// editor" from "the click did nothing".
+pub(crate) fn rename_field() -> Option<Retained<NSTextField>> {
+    with_ui(|ui| ui.rename.clone())
+}
+
+/// Post the notification AppKit posts on every text edit, so a self-test can
+/// reach `SearchDelegate::controlTextDidChange:` without synthesizing keys.
+pub(crate) fn post_search_did_change() {
+    let Some(field) = search_field() else { return };
+    unsafe {
+        // SAFETY: the field is live, `NSControlTextDidChangeNotification` is
+        // the name AppKit posts for a text edit, and `object` is the control
+        // that changed. Only the search field observes that name, through the
+        // delegate it already has.
+        let name = objc2_app_kit::NSControlTextDidChangeNotification;
+        let center = objc2_foundation::NSNotificationCenter::defaultCenter();
+        let obj: Option<&AnyObject> = Some(&*(&*field as *const NSTextField as *const AnyObject));
+        let _: () = msg_send![&*center, postNotificationName: name, object: obj];
+    }
 }
 
 /// The card snapshot for hit-testing outside draws.
 pub(crate) fn cards() -> Vec<String> {
     with_ui(|ui| ui.cards.iter().map(|c| c.item.id.clone()).collect())
+}
+
+/// How many cards the visible band currently covers (the warm band's size).
+/// `--selftest thumbcull` reads it to tell "the on-screen cards have pictures"
+/// from "nothing was warmed at all".
+pub(crate) fn visible_card_count() -> usize {
+    let n = with_ui(|ui| ui.cards.len());
+    match visible_warm_range(n) {
+        Some((lo, hi)) => hi.saturating_sub(lo) + 1,
+        None => 0,
+    }
 }
 
 // MARK: Model access (the shelf UI always talks to the shared controller)
@@ -212,15 +281,62 @@ fn with_model_mut<R>(f: impl FnOnce(&mut ShelfModel) -> R) -> R {
     crate::shelf::panel::with_model_mut(f)
 }
 
+/// The index band of cards whose thumbnails are worth warming: what the clip
+/// view shows, plus one card of bleed on each side (a scroll can bring the
+/// neighbour in before the next reload). `n` is the number of cards about to be
+/// shown (`ui.cards` is still the previous reload's list here). `None` when the
+/// tree is not up yet — the caller then warms nothing, and the first `reload`
+/// after `build` (which runs with the scroll view in place) fills the band.
+fn visible_warm_range(n: usize) -> Option<(usize, usize)> {
+    if n == 0 {
+        return Some((0, 0));
+    }
+    with_ui(|ui| {
+        let (Some(scroll), Some(_row)) = (&ui.scroll, &ui.row) else {
+            return None;
+        };
+        let clip = scroll.contentView().bounds();
+        let stride = card::CARD_W + CARD_SPACING;
+        // Card x ranges: [CARD_SIDE + i*stride, +CARD_W]. The visible span
+        // reaches up to CARD_W of bleed past the clip on each side.
+        let lo_x = clip.min().x - card::CARD_W - CARD_SIDE;
+        let hi_x = clip.max().x + card::CARD_W;
+        let lo = (((lo_x - CARD_SIDE) / stride).floor().max(0.0)) as usize;
+        let hi = (((hi_x - CARD_SIDE) / stride).ceil().max(0.0)) as usize;
+        Some((lo.min(n - 1), hi.min(n - 1)))
+    })
+}
+
 /// Pull the whole drawable state out of the model. Warms thumbnails as a
 /// side effect (they land in later reloads, like SwiftUI's `thumbTick`).
 fn reload() {
+    // Which cards ask for a thumbnail: only the ones on screen (plus a card of
+    // margin), like SwiftUI's LazyHStack, which built just the cards it showed.
+    //
+    // Warming the whole list made the long 全部 tab decode every picture in the
+    // history on each 0.25 s poll tick. Past the store's 100-thumbnail cache
+    // cap that evicted the oldest third — the leftmost, on-screen cards — which
+    // then decoded again next tick and were evicted again: the pictures blinked
+    // between placeholder and image. Off-screen cards are not drawn, so they
+    // need no thumbnail.
+    //
+    // The band is computed from the item count before the model borrow: the
+    // card list in `ui` is still the previous reload's.
+    let item_count = with_model_mut(|m| m.items().len());
+    let warm = visible_warm_range(item_count);
     let snapshot = with_model_mut(|m| {
+        // Publish a background search that has landed, then let the poll tick
+        // start whatever the current query still needs (`serviceSearch`).
+        m.drain_completions();
+        m.service_search();
         let items = m.items();
+        debug_assert_eq!(items.len(), item_count);
         let on_clipboard = m.with_store(|s| s.items.first().map(|it| it.id.clone()));
         let mut cards: Vec<CardData> = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
-            let thumb = if item.kind == ClipKind::Image || item.kind == ClipKind::Video {
+            let on_screen = warm.map_or(false, |(lo, hi)| index >= lo && index <= hi);
+            let thumb = if (item.kind == ClipKind::Image || item.kind == ClipKind::Video) && on_screen
+            {
                 m.thumbnail(item)
             } else {
                 None
@@ -292,8 +408,29 @@ fn layout_row(ui: &Ui) {
 }
 
 /// Apply a model snapshot to the views (the SwiftUI body re-evaluation).
+///
+/// The calls AppKit can answer with a delegate notification — changing the
+/// first responder, writing a live field's value, pulling the rename box out
+/// of the tree — are collected here and applied after the `with_ui` borrow is
+/// released. Each of them can end editing synchronously, and the NSTextField
+/// delegates under it call back into `with_ui`, whose `borrow_mut` would
+/// abort the process.
 fn apply_snapshot(mut s: Snapshot) {
+    let mut root: Option<Retained<ShelfRootView>> = None;
+    // `Some(None)` clears the responder; `None` leaves it alone.
+    let mut responder: Option<Option<Retained<NSTextField>>> = None;
+    let mut drop_rename: Option<Retained<NSTextField>> = None;
+    let mut search_text: Option<(Retained<NSTextField>, String)> = None;
+    // Where the clip must sit to center a freshly selected card. Collected
+    // like the responder changes: writing a clip's bounds runs AppKit layout,
+    // and `HeaderView::layout` reaches back into `with_ui`.
+    let mut center: Option<(Retained<NSScrollView>, CGPoint)> = None;
+    // The search field's pending visibility, applied out of the borrow: hiding
+    // a first-responder field ends its editing synchronously and the search
+    // delegate borrows `with_ui` again (the contact-pane crash).
+    let mut hide_search: Option<(Retained<NSTextField>, bool)> = None;
     with_ui(|ui| {
+        root = ui.root.clone();
         // Rename bookkeeping used to commit before switching away.
         let switched_card = match (&ui.last_renaming, &s.renaming) {
             (Some(a), b) if Some(a) != b.as_ref() && b.is_some() => Some(a.clone()),
@@ -306,9 +443,11 @@ fn apply_snapshot(mut s: Snapshot) {
         ui.cards = std::mem::take(&mut s.cards);
         layout_row(ui);
         // Sync the search text + clear button (unless it already matches).
+        // Written after the borrow: setting the value of a field whose editor
+        // is live can fire `controlTextDidChange:` on the spot.
         if let Some(field) = &ui.search {
             if field.stringValue().to_string() != s.query {
-                field.setStringValue(&NSString::from_str(&s.query));
+                search_text = Some((field.clone(), s.query.clone()));
             }
         }
         if let Some(header) = &ui.header {
@@ -331,37 +470,75 @@ fn apply_snapshot(mut s: Snapshot) {
                 0.0
             };
         }
-        // Selection moved: center it (0.1s easeOut, like the SwiftUI proxy).
+        // Selection moved: center it.
         if s.selected != ui.last_selected {
             ui.last_selected = s.selected.clone();
             if let Some(sel) = &s.selected {
-                center_card(ui, sel, true);
+                center = center_card_origin(ui, sel);
+                if let Some(f) = &ui.footer {
+                    f.setNeedsDisplay(true);
+                }
             }
         }
-        // Rename box placement.
-        sync_rename_field(ui, &s);
+        // Rename box placement. A fresh target card asks for the caret; an
+        // ended rename hands the box back to be removed.
+        let handoff = sync_rename_field(ui, &s);
+        responder = handoff.focus.map(Some);
+        drop_rename = handoff.drop;
         // Focus events: open tick drops focus; focus_search grabs it.
         if s.open_tick != ui.last_open_tick {
             ui.last_open_tick = s.open_tick;
-            if let Some(root) = &ui.root {
-                if let Some(w) = root.window() {
+            responder = Some(None);
+        }
+        if s.focus_search != ui.last_focus_search {
+            ui.last_focus_search = s.focus_search;
+            if let Some(field) = focus_search_plan(ui) {
+                responder = Some(Some(field));
+            }
+        }
+        // Empty state.
+        sync_empty(ui, &s);
+        hide_search = sync_settings_view(ui, &s);
+        mark_dirty(ui);
+    });
+
+    // Out of the borrow: only now may AppKit run a delegate callback.
+    // Hiding the search field last: with the caret in it, setHidden ends
+    // editing synchronously and the search delegate fires — it needs both
+    // the with_ui and the model borrows gone.
+    if let Some((field, hidden)) = hide_search {
+        field.setHidden(hidden);
+    }
+    if let Some((scroll, origin)) = center {
+        scroll.contentView().setBoundsOrigin(origin);
+    }
+    if let Some((field, text)) = search_text {
+        set_search_text(&field, &text);
+    }
+    if let Some(field) = drop_rename {
+        field.removeFromSuperview();
+    }
+    if let Some(choice) = responder {
+        if let Some(w) = root.as_ref().and_then(|r| r.window()) {
+            match &choice {
+                Some(field) => {
+                    w.makeFirstResponder(Some(field));
+                }
+                None => {
                     w.makeFirstResponder(None);
                 }
             }
         }
-        if s.focus_search != ui.last_focus_search {
-            ui.last_focus_search = s.focus_search;
-            focus_search_field(ui);
-        }
-        // Empty state.
-        sync_empty(ui, &s);
-        sync_settings_view(ui, &s);
-        mark_dirty(ui);
-    });
+    }
 }
 
 fn mark_dirty(ui: &Ui) {
     if let Some(v) = &ui.root {
+        v.setNeedsDisplay(true);
+    }
+    // The ground is its own view now; without this a background image picked
+    // from the settings pane would not repaint until something else did.
+    if let Some(v) = &ui.ground {
         v.setNeedsDisplay(true);
     }
     if let Some(v) = &ui.sidebar {
@@ -390,34 +567,58 @@ fn nav_index(s: &Snapshot) -> usize {
     }
 }
 
-/// Scroll the clip so the card centers (animated when the shelf is live).
-fn center_card(ui: &Ui, id: &str, animated: bool) {
-    let (Some(scroll), Some(row)) = (&ui.scroll, &ui.row) else { return };
-    let Some(i) = ui.cards.iter().position(|c| c.item.id == id) else { return };
+/// Where the clip has to sit so the card centers, or `None` when the tree is
+/// not up or the card is gone.
+///
+/// The caller writes the origin after the `with_ui` borrow is released:
+/// setting a clip view's bounds runs AppKit layout synchronously, and the
+/// header's layout pass calls `with_ui` for the search field — the same
+/// RefCell, borrowed twice, aborting the process. Swift runs a 0.1s easeOut
+/// here (`withAnimation` + `proxy.scrollTo`); the terminal state is what every
+/// snapshot and the next frame need, so the scroll lands directly.
+fn center_card_origin(ui: &Ui, id: &str) -> Option<(Retained<NSScrollView>, CGPoint)> {
+    let (scroll, row) = (ui.scroll.clone()?, ui.row.as_ref()?);
+    let i = ui.cards.iter().position(|c| c.item.id == id)?;
     let ticket = ticket_rect(row.bounds().size.height, i, ui.cards[i].selected);
     let clip = scroll.contentView();
     let mut x = ticket.mid().x - clip.bounds().size.width / 2.0;
     let range = (row.bounds().size.width - clip.bounds().size.width).max(0.0);
     x = x.clamp(0.0, range);
-    let origin = CGPoint::new(x, 0.0);
-    // Swift runs a 0.1s easeOut here (`withAnimation` + `proxy.scrollTo`);
-    // the terminal state is what every snapshot and the next frame need, so
-    // the scroll lands directly (the blend is a nicety, not layout). The
-    // `animated` flag stays for the interactive pass to reintroduce if the
-    // illusion is ever missed.
-    let _ = animated;
-    clip.setBoundsOrigin(origin);
-    if let Some(f) = &ui.footer {
-        f.setNeedsDisplay(true);
-    }
+    Some((scroll, CGPoint::new(x, 0.0)))
 }
 
-/// The search field gets the keyboard; pending keystrokes land right after
-/// (Swift appends `pendingQuery` post-focus so select-all cannot eat it).
-fn focus_search_field(ui: &mut Ui) {
-    let (Some(root), Some(field)) = (&ui.root, &ui.search) else { return };
-    let Some(window) = root.window() else { return };
-    window.makeFirstResponder(Some(field));
+/// Write the query into the search box.
+///
+/// While the box is being edited, what it shows and where the caret sits live
+/// in the field editor (a shared `NSTextView`), not in the cell —
+/// `setStringValue:` only updates the cell behind it. That matters on the
+/// hand-off path: with nothing focused, the first character goes to
+/// `pending_query`, the caret lands, and the flush raises the query to "n".
+/// Writing only the cell left the editor empty, so the box looked like it had
+/// swallowed the keystroke and the character typed next replaced it (the
+/// editor's single letter became the whole query). Write the editor too, and
+/// leave the caret after the text so the next keystroke appends.
+fn set_search_text(field: &NSTextField, text: &str) {
+    field.setStringValue(&NSString::from_str(text));
+    let Some(editor) = field.currentEditor() else { return };
+    // SAFETY: a field editor is an `NSTextView` for a text control; the
+    // pointer upcast is the same one `tint_caret` uses.
+    let tv: &NSTextView = unsafe { &*(Retained::as_ptr(&editor) as *const NSTextView) };
+    let s = NSString::from_str(text);
+    if tv.string().to_string() != text {
+        tv.setString(&s);
+    }
+    let end = s.length();
+    tv.setSelectedRange(NSRange::new(end, 0));
+}
+
+/// Arm the search-field focus grab and return the field for the caller to
+/// make first responder once the UI borrow is gone.
+///
+/// Pending keystrokes land right after (Swift appends `pendingQuery`
+/// post-focus so select-all cannot eat it).
+fn focus_search_plan(ui: &mut Ui) -> Option<Retained<NSTextField>> {
+    let field = ui.search.clone()?;
     crate::app::delegate::dispatch_main_after(0.0, Box::new(|| {
         let typed = crate::shelf::panel::with_model_mut(|m| {
             let t = m.pending_query.clone();
@@ -433,11 +634,28 @@ fn focus_search_field(ui: &mut Ui) {
             reload();
         }
     }));
+    Some(field)
+}
+
+/// The two responder changes `sync_rename_field` cannot make itself, because
+/// it runs inside the UI borrow and each one reaches a delegate that calls
+/// back into `with_ui`.
+struct RenameHandoff {
+    /// A fresh target card was seeded: put the caret in the box.
+    focus: Option<Retained<NSTextField>>,
+    /// The rename ended: pull the box out of the tree.
+    drop: Option<Retained<NSTextField>>,
+}
+
+impl RenameHandoff {
+    fn none() -> RenameHandoff {
+        RenameHandoff { focus: None, drop: None }
+    }
 }
 
 /// Show / move / commit the inline title editor.
-fn sync_rename_field(ui: &mut Ui, s: &Snapshot) {
-    let Some(row) = ui.row.clone() else { return };
+fn sync_rename_field(ui: &mut Ui, s: &Snapshot) -> RenameHandoff {
+    let Some(row) = ui.row.clone() else { return RenameHandoff::none() };
     match &s.renaming {
         Some(id) if ui.cards.iter().any(|c| c.item.id == *id) => {
             if ui.rename.is_none() {
@@ -481,16 +699,14 @@ fn sync_rename_field(ui: &mut Ui, s: &Snapshot) {
                 ui.rename_for = Some(id.clone());
                 let title = ui.cards[i].item.title.clone().unwrap_or_default();
                 field.setStringValue(&NSString::from_str(&title));
-                if let Some(w) = row.window() {
-                    w.makeFirstResponder(Some(&field));
-                }
+                // Focusing this box ends the search field's editing.
+                return RenameHandoff { focus: Some(field), drop: None };
             }
+            RenameHandoff::none()
         }
         _ => {
-            if let Some(field) = ui.rename.take() {
-                field.removeFromSuperview();
-            }
             ui.rename_for = None;
+            RenameHandoff { focus: None, drop: ui.rename.take() }
         }
     }
 }
@@ -600,14 +816,22 @@ pub fn build(mtm: MainThreadMarker, size: CGSize) -> Retained<ShelfRootView> {
     // The material goes in first so it backs every subview below; a snapshot
     // cannot composite one, so the shelf's render self-tests skip it (the
     // opaque ground then draws the same frame).
-    if crate::shelf::panel::is_material_enabled() {
+    if crate::shelf::panel::is_material_enabled() && crate::app::theme_skin::material_code() != 0 {
         let glass = make_material_view(mtm, CGRect::new(CGPoint::ZERO, size));
         root.addSubview(&glass);
     }
     // Round the host layer as well as the drawn path: the material is a
     // full-bleed subview, so without this it would square off the silhouette
     // the path rounds.
-    theme::clip_to_radius(&root, theme::RADIUS_PANEL);
+    theme::clip_to_radius(&root, theme::radius_panel());
+    // The ground goes in right after the material: above the glass, below
+    // every card. Painted in `ShelfRootView::drawRect` it landed UNDER the
+    // material — which is a full-bleed subview — so on the live panel the
+    // user's background image and the skin's gradient were both invisible,
+    // while the offscreen render (no material) showed them.
+    let ground = GroundView::new(mtm, CGRect::new(CGPoint::ZERO, size));
+    root.addSubview(&ground);
+    with_ui(|ui| ui.ground = Some(ground.clone()));
     let sidebar = SidebarView::new(mtm, CGRect::new(CGPoint::ZERO, CGSize::new(SIDEBAR_W, size.height)));
     root.addSubview(&sidebar);
     let header = HeaderView::new(mtm, CGRect::new(content.min(), CGSize::new(content.size.width, HEADER_H)));
@@ -647,6 +871,15 @@ pub fn build(mtm: MainThreadMarker, size: CGSize) -> Retained<ShelfRootView> {
         ui.footer = Some(footer);
         ui.search = Some(search);
     });
+    // Place the search box now that it is reachable from the UI state. Its
+    // position lives in `HeaderView::layout`, which AppKit only runs when the
+    // view is flagged; without this first pass the box stays at the 0×0 frame
+    // it was created with, and a 0×0 field is invisible to `hitTest:` — the
+    // mouse never reached it.
+    if let Some(header) = with_ui(|ui| ui.header.clone()) {
+        header.setNeedsLayout(true);
+        header.layoutSubtreeIfNeeded();
+    }
     reload();
     root
 }
@@ -666,7 +899,14 @@ fn make_material_view(mtm: MainThreadMarker, frame: CGRect) -> Retained<objc2_ap
         NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
     };
     let v = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
-    v.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
+    // The skin picks the material; 0 means it paints its own solid ground
+    // (the callers skip this view entirely in that case).
+    let code = crate::app::theme_skin::material_code();
+    v.setMaterial(if code == 0 {
+        NSVisualEffectMaterial::UnderWindowBackground
+    } else {
+        NSVisualEffectMaterial(code as isize)
+    });
     v.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
     v.setState(NSVisualEffectState::Active);
     v.setAutoresizingMask(
@@ -676,7 +916,45 @@ fn make_material_view(mtm: MainThreadMarker, frame: CGRect) -> Retained<objc2_ap
     v
 }
 
-fn make_search_field(mtm: MainThreadMarker) -> Retained<NSTextField> {    let field = NSTextField::initWithFrame(NSTextField::alloc(mtm), CGRect::ZERO);
+struct SearchFieldIvars {}
+
+define_class!(
+    // SAFETY: NSTextField subclass; main-thread only, no ivars.
+    #[unsafe(super(NSTextField))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = SearchFieldIvars]
+    struct SearchField;
+
+    unsafe impl NSObjectProtocol for SearchField {}
+
+    impl SearchField {
+        /// Take the click even while the panel is not the key window.
+        ///
+        /// The shelf is a borderless `NonactivatingPanel`. When a click
+        /// arrives before the panel holds the keyboard, AppKit consults
+        /// `acceptsFirstMouse:` on the view `hitTest:` picked — this field —
+        /// and NOT on its superviews, so the `true` that `ShelfRootView`,
+        /// `HeaderView` and the rest already return never applied here. The
+        /// click was swallowed: the box read as a dead grey rectangle and
+        /// only a second click got the caret in.
+        #[unsafe(method(acceptsFirstMouse:))]
+        fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> objc2::runtime::Bool {
+            true.into()
+        }
+    }
+);
+
+impl SearchField {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = mtm.alloc::<Self>().set_ivars(SearchFieldIvars {});
+        unsafe { msg_send![super(this), initWithFrame: CGRect::ZERO] }
+    }
+}
+
+fn make_search_field(mtm: MainThreadMarker) -> Retained<NSTextField> {
+    // `SearchField` rather than a stock `NSTextField`: the field is what a
+    // first click in a non-key panel lands on, and a stock one refuses it.
+    let field: Retained<NSTextField> = Retained::into_super(SearchField::new(mtm));
     field.setBezeled(false);
     field.setDrawsBackground(false);
     field.setFocusRingType(objc2_app_kit::NSFocusRingType(0)); // none
@@ -750,28 +1028,10 @@ define_class!(
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: CGRect) {
             let bounds = self.bounds();
-            NSGraphicsContext::saveGraphicsState_class();
-            rounded_top(bounds, theme::RADIUS_PANEL).addClip();
-            // The panel ground. While the shelf's material is on (the live
-            // window) this is mostly transparent and the desktop shows
-            // through; a snapshot paints it opaque.
-            theme::ground_over_material().setFill();
-            objc2_app_kit::NSRectFill(bounds);
-            // Sidebar: one step recessed, closed off by a hairline rather
-            // than by a painted band with a hand-torn edge.
-            theme::ground_deep().setFill();
-            NSBezierPath::bezierPathWithRect(CGRect::new(
-                CGPoint::ZERO,
-                CGSize::new(SIDEBAR_W, bounds.size.height),
-            ))
-            .fill();
-            theme::separator().setFill();
-            NSBezierPath::bezierPathWithRect(CGRect::new(
-                CGPoint::new(SIDEBAR_W - 1.0, 0.0),
-                CGSize::new(1.0, bounds.size.height),
-            ))
-            .fill();
-            NSGraphicsContext::restoreGraphicsState_class();
+            // The ground (the user's background image / the skin's gradient /
+            // the flat colour) and the sidebar band live in `GroundView` one
+            // layer down: a `drawRect` here paints UNDER every subview, and the
+            // material is one of them.
             // Empty hints (spinner is a real NSProgressIndicator subview).
             match *self.ivars().empty.borrow() {
                 Some(EmptyState::NoClips) => empty_hint(bounds, "clipboard", &no_clips_text()),
@@ -814,6 +1074,73 @@ fn rounded_top(r: CGRect, radius: f64) -> Retained<NSBezierPath> {
     theme::rounded_rect_corners(r, radius, theme::Corners::TOP)
 }
 
+pub struct GroundIvars {}
+
+define_class!(
+    // SAFETY: plain NSView; main-thread UI like every AppKit view.
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = GroundIvars]
+    struct GroundView;
+
+    unsafe impl NSObjectProtocol for GroundView {}
+
+    impl GroundView {
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> objc2::runtime::Bool {
+            true.into()
+        }
+
+        #[unsafe(method(drawRect:))]
+        fn draw_rect(&self, _dirty: CGRect) {
+            let bounds = self.bounds();
+            NSGraphicsContext::saveGraphicsState_class();
+            rounded_top(bounds, theme::radius_panel()).addClip();
+            // The panel ground: the skin's own colour scheme across the whole
+            // surface, with the user's background photo blended over the
+            // content column only (right of the sidebar — the sidebar keeps
+            // the skin's recessed band, never the photo). While the shelf's
+            // material is on (the live window) the flat case is mostly
+            // transparent and the desktop shows through; a snapshot paints
+            // it opaque.
+            theme::draw_panel_ground_in(
+                bounds,
+                CGRect::new(
+                    CGPoint::new(SIDEBAR_W, 0.0),
+                    CGSize::new((bounds.size.width - SIDEBAR_W).max(0.0), bounds.size.height),
+                ),
+            );
+            // Sidebar: one step recessed, closed off by a hairline rather
+            // than by a painted band with a hand-torn edge.
+            theme::ground_deep().setFill();
+            NSBezierPath::bezierPathWithRect(CGRect::new(
+                CGPoint::ZERO,
+                CGSize::new(SIDEBAR_W, bounds.size.height),
+            ))
+            .fill();
+            theme::separator().setFill();
+            NSBezierPath::bezierPathWithRect(CGRect::new(
+                CGPoint::new(SIDEBAR_W - 1.0, 0.0),
+                CGSize::new(1.0, bounds.size.height),
+            ))
+            .fill();
+            NSGraphicsContext::restoreGraphicsState_class();
+        }
+    }
+);
+
+impl GroundView {
+    fn new(mtm: MainThreadMarker, frame: CGRect) -> Retained<Self> {
+        let this = mtm.alloc::<Self>().set_ivars(GroundIvars {});
+        let v: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame] };
+        v.setAutoresizingMask(
+            objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable
+                | objc2_app_kit::NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        v
+    }
+}
+
 /// 「还没有内容…」 with today's capture shortcut filled in.
 fn no_clips_text() -> String {
     let display = crate::app::preferences::Preferences::shared()
@@ -832,7 +1159,7 @@ fn empty_hint(bounds: CGRect, icon: &str, text: &str) {
         icon,
         34.0,
         SymbolWeight::Light,
-        &theme::label_tertiary().colorWithAlphaComponent(0.7),
+        &theme::label_secondary().colorWithAlphaComponent(0.8),
     ) {
         let sz = img.size();
         card::draw_centered(
@@ -853,7 +1180,7 @@ fn empty_hint(bounds: CGRect, icon: &str, text: &str) {
         ),
         text,
         &font,
-        &theme::label_tertiary(),
+        &theme::label_secondary(),
         None,
     );
 }
@@ -899,15 +1226,24 @@ define_class!(
 
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: CGRect) {
+            // 左上角是 app 自己的图标（旧的是「PasteJar」品牌字）。这一带的
+            // 高度仍按品牌字号的行高算：导航行的命中区在 mouseUp 与
+            // selftest_sidebar_row_center 里各算了一遍同一个公式，
+            // 改高度就得三处一起改，所以这里只换画什么、不动行高。
             let brand_font = theme::brand_font(BRAND_SIZE);
-            // 「PasteJar」 script, padded 22 / 10 / 22.
-            card::draw_text(
-                CGRect::new(CGPoint::new(22.0, 10.0), CGSize::new(SIDEBAR_W - 22.0, card::line_height(&brand_font))),
-                crate::app::brand::BRAND,
-                &brand_font,
-                &theme::label(),
-                None,
-            );
+            let brand_band = card::line_height(&brand_font);
+            let brand_avail = SIDEBAR_W - 44.0;
+            if let Some(logo) = theme::logo() {
+                let s = logo.size();
+                let h = brand_band.min(brand_avail).min(52.0);
+                let w = if s.height > 0.0 { (s.width * h / s.height).min(brand_avail) } else { h };
+                card::draw_image(
+                    &logo,
+                    CGRect::new(CGPoint::new(22.0, 10.0), CGSize::new(w, h)),
+                    objc2_app_kit::NSCompositingOperation::SourceOver,
+                    1.0,
+                );
+            }
             let rows_top = 10.0 + card::line_height(&brand_font) + 22.0;
             let active = *self.ivars().active.borrow();
             for (i, (icon, title)) in nav_rows().into_iter().enumerate() {
@@ -917,10 +1253,12 @@ define_class!(
                     // Selection: the accent chip, inset inside the sidebar.
                     let patch = CGRect::new(CGPoint::new(6.0, row_y), CGSize::new(SIDEBAR_W - 12.0, 60.0));
                     theme::accent().setFill();
-                    theme::rounded_rect(patch, theme::RADIUS_CONTROL).fill();
+                    theme::rounded_rect(patch, theme::radius_control()).fill();
                 }
+                // Ink on the accent chip: the skin decides, so a pale accent
+                // gets dark ink instead of vanishing white text.
                 let tint = if i == active {
-                    NSColor::alternateSelectedControlTextColor()
+                    theme::text_on_accent()
                 } else {
                     theme::label()
                 };
@@ -1008,6 +1346,30 @@ define_class!(
             true.into()
         }
 
+        #[unsafe(method(layout))]
+        fn layout_search(&self) {
+            // Position the search box off the header's own geometry. This has
+            // to happen in the layout pass, not in `drawRect:`: the draw pass
+            // is skipped whole whenever a pane is open (the early return
+            // below) or the dirty rect is empty, and the field then keeps the
+            // 0×0 frame it was created with. A 0×0 field is invisible to
+            // `hitTest:`, so a real click at the box the panel draws never
+            // reached the control — the box looked dead while a programmatic
+            // `makeFirstResponder` still worked.
+            let gx = self.bounds().size.width - 440.0;
+            if let Some(field) = with_ui(|ui| ui.search.clone()) {
+                // The field covers the capsule the header draws, not a 22pt
+                // strip inside it. At 22pt tall the top and bottom thirds of
+                // the visible 40pt box were `HeaderView` — a click there did
+                // nothing, so the box read as dead. It stops short of the
+                // right edge so the clear button still takes its own click.
+                field.setFrame(CGRect::new(
+                    CGPoint::new(gx + 34.0, 12.0),
+                    CGSize::new(400.0 - 34.0 - 34.0, 40.0),
+                ));
+            }
+        }
+
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: CGRect) {
             let pane_open = *self.ivars().settings.borrow() || *self.ivars().contact.borrow();
@@ -1065,12 +1427,9 @@ define_class!(
                     1.0,
                 );
             }
-            if let Some(field) = with_ui(|ui| ui.search.clone()) {
-                field.setFrame(CGRect::new(
-                    CGPoint::new(gx + 38.0, 12.0 + (40.0 - 22.0) / 2.0),
-                    CGSize::new(321.0, 22.0),
-                ));
-            }
+            // The box's position is set in `layout` above. A frame written
+            // here would only apply on the passes that actually reach this
+            // point, and the pane branch above returns before it.
             let has_query = !self.ivars().query.borrow().is_empty();
             if has_query {
                 if let Some(img) = card::symbol("xmark.circle.fill", 17.0, SymbolWeight::Regular, &theme::label_tertiary()) {
@@ -1092,7 +1451,7 @@ define_class!(
             theme::separator().setStroke();
             let stroke = theme::rounded_rect(
                 CGRect::new(CGPoint::new(gx, 12.0), CGSize::new(400.0, 40.0)),
-                theme::RADIUS_CONTROL,
+                theme::radius_control(),
             );
             stroke.setLineWidth(1.0);
             stroke.stroke();
@@ -1276,15 +1635,20 @@ define_class!(
             };
             let Some(item) = card_item(i) else { return };
             match zone {
-                HitZone::Action(action) => run_action(action, &item, event),
+                HitZone::Action(action) => run_action(action, &item),
                 HitZone::TitleCheck => finalize_rename_click(&item),
                 HitZone::Title => title_click(&item, event),
+                HitZone::Thumb => crate::shelf::image_viewer::open(&item.id),
                 HitZone::Body => {
                     if event.clickCount() >= 2 {
                         with_model_mut(|m| m.copy_and_close(&item, true));
-                    } else {
-                        with_model_mut(|m| m.copy(&item));
+                        // The model only queued the close: draw the copy first,
+                        // then run it once the borrow is gone.
+                        reload();
+                        crate::shelf::panel::finish_pending_close();
+                        return;
                     }
+                    with_model_mut(|m| m.copy(&item));
                     reload();
                 }
             }
@@ -1313,8 +1677,11 @@ define_class!(
             if delta == 0.0 {
                 return;
             }
-            with_ui(|ui| {
-                let Some(scroll) = &ui.scroll else { return };
+            // Work out the target inside the borrow, scroll outside it: a
+            // scroll re-lays the clip synchronously and the header's layout
+            // pass re-enters `with_ui`.
+            let plan = with_ui(|ui| {
+                let scroll = ui.scroll.clone()?;
                 let clip = scroll.contentView();
                 let doc_w = scroll
                     .documentView()
@@ -1324,12 +1691,13 @@ define_class!(
                 // Flipped or not, horizontal follows the vertical convention:
                 // content towards the user (delta > 0) walks back to the start.
                 let x = (clip.bounds().origin.x - delta).clamp(0.0, max_x);
-                if x == clip.bounds().origin.x {
-                    return;
-                }
+                (x != clip.bounds().origin.x).then_some((scroll, x))
+            });
+            if let Some((scroll, x)) = plan {
+                let clip = scroll.contentView();
                 clip.scrollToPoint(CGPoint::new(x, clip.bounds().origin.y));
                 scroll.reflectScrolledClipView(&clip);
-            });
+            }
         }
     }
 );
@@ -1352,6 +1720,8 @@ enum HitZone {
     Body,
     Title,
     TitleCheck,
+    /// The picture itself: a click opens it full size.
+    Thumb,
     Action(card::ActionKind),
 }
 
@@ -1383,6 +1753,29 @@ fn hit_card(row: &CardsRowView, p: CGPoint) -> Option<(usize, HitZone)> {
                 }
                 return Some((c.index, HitZone::Title));
             }
+            // The picture answers before the card body: clicking it opens the
+            // full-size look, clicking anywhere else on the card still copies.
+            // Image cards only — a video's payload is not something `NSImage`
+            // can show, and a card with no thumbnail yet (text / link / file,
+            // or one still decoding) keeps its whole body as a copy target.
+            if c.item.kind == ClipKind::Image {
+                if let Some(img) = &c.thumb {
+                    let top = if c.has_title_row() {
+                        card::title_row_rect(ticket).max().y
+                    } else {
+                        ticket.min().y + card::BODY_TOP
+                    };
+                    let title = c
+                        .item
+                        .title
+                        .as_deref()
+                        .map(|t| !t.is_empty())
+                        .unwrap_or(false);
+                    if contains(&card::photo_rect(ticket, top, title, img), p) {
+                        return Some((c.index, HitZone::Thumb));
+                    }
+                }
+            }
             return Some((c.index, HitZone::Body));
         }
         None
@@ -1404,6 +1797,7 @@ fn title_click(item: &ClipItem, event: &NSEvent) {
     if event.clickCount() >= 2 {
         with_model_mut(|m| m.copy_and_close(item, true));
         reload();
+        crate::shelf::panel::finish_pending_close();
         return;
     }
     with_model_mut(|m| {
@@ -1414,25 +1808,37 @@ fn title_click(item: &ClipItem, event: &NSEvent) {
     reload();
 }
 
+/// Open whatever this card's edit/preview action leads to.
+///
+/// Text/URL and image open editor windows that hide the shelf; a video has no
+/// editor and goes to Quick Look. Never call this with a model borrow held: the
+/// editors and `toggle_quick_look` all read the model themselves, and a second
+/// `borrow_mut` on the same `RefCell` aborts the process (the same rule the
+/// pin-delete confirm follows).
+fn open_editor_or_preview(item: &ClipItem) {
+    match item.kind {
+        ClipKind::Text | ClipKind::Url => crate::shelf::text_editor::TextEditorWindow::open(item),
+        ClipKind::Image => crate::shelf::image_editor::ImageEditorWindow::open(item),
+        _ => crate::shelf::panel::toggle_quick_look(),
+    }
+}
+
 /// Action-strip dispatch (the Swift card's stub buttons).
-fn run_action(action: card::ActionKind, item: &ClipItem, _event: &NSEvent) {
+fn run_action(action: card::ActionKind, item: &ClipItem) {
     match action {
-        card::ActionKind::Edit => {
-            with_model_mut(|m| {
-                m.set_selected_id(Some(item.id.clone()));
-                m.edit(item);
-            });
-        }
-        card::ActionKind::Preview => {
-            with_model_mut(|m| {
-                m.set_selected_id(Some(item.id.clone()));
-                m.edit(item);
-            });
+        card::ActionKind::Edit | card::ActionKind::Preview => {
+            // Select inside the borrow, then let it go: the preview resolves
+            // its file from the model, so running it in here re-enters the
+            // RefCell and aborts the process.
+            with_model_mut(|m| m.select_for_action(item));
+            open_editor_or_preview(item);
         }
         card::ActionKind::Pin => {
             with_model_mut(|m| m.with_store_mut(|s| s.toggle_pin(&item.id, true)));
         }
         card::ActionKind::Save => {
+            // The save panel is modal: run it with no model borrow held, or the
+            // poll timer's reload inside it aborts the process.
             crate::shelf::exporter::export(item);
         }
         card::ActionKind::Trash => {
@@ -1462,31 +1868,31 @@ define_class!(
             with_ui(|ui| {
                 let Some(field) = ui.search.clone() else { return };
                 let q = field.stringValue().to_string();
-                with_model_mut(|m| {
-                    m.set_query(q);
-                    m.begin_search();
-                });
+                // Only record it: the poll tick starts the search
+                // (`serviceSearch`). Spawning here would hand the main thread
+                // the join of the job the next keystroke cancels.
+                with_model_mut(|m| m.set_query(q));
             });
             reload();
         }
 
         #[unsafe(method(controlTextDidBeginEditing:))]
         fn began(&self, _n: &NSNotification) {
-            with_ui(|ui| {
-                if let Some(f) = &ui.search {
-                    update_placeholder(f, false);
-                    tint_caret(f);
-                }
-            });
+            // Clone the field out of the cell first. `update_placeholder` and
+            // `tint_caret` talk to AppKit, and AppKit answers a call made from
+            // inside a delegate with further delegate callbacks
+            // (`controlTextDidEndEditing:` among them, as the click path shows).
+            // Running those while the cell is borrowed makes the re-entrant
+            // `with_ui` panic; only the clone may happen under the borrow.
+            let Some(field) = with_ui(|ui| ui.search.clone()) else { return };
+            update_placeholder(&field, false);
+            tint_caret(&field);
         }
 
         #[unsafe(method(controlTextDidEndEditing:))]
         fn ended(&self, _n: &NSNotification) {
-            with_ui(|ui| {
-                if let Some(f) = &ui.search {
-                    update_placeholder(f, true);
-                }
-            });
+            let Some(field) = with_ui(|ui| ui.search.clone()) else { return };
+            update_placeholder(&field, true);
         }
     }
 );
@@ -1568,6 +1974,8 @@ define_class!(
         fn copy_close(&self, _s: &AnyObject) {
             let item = self.ivars().item.borrow().clone();
             with_model_mut(|m| m.copy_and_close(&item, false));
+            reload();
+            crate::shelf::panel::finish_pending_close();
         }
 
         #[unsafe(method(renameItem:))]
@@ -1587,22 +1995,21 @@ define_class!(
             reload();
         }
 
+        // Both of these act after the model borrow is released: the editors and
+        // the preview panel read the model themselves, and doing that inside
+        // this borrow re-enters the RefCell and aborts the process.
         #[unsafe(method(editItem:))]
         fn edit_item(&self, _s: &AnyObject) {
             let item = self.ivars().item.borrow().clone();
-            with_model_mut(|m| {
-                m.set_selected_id(Some(item.id.clone()));
-                m.edit(&item);
-            });
+            with_model_mut(|m| m.select_for_action(&item));
+            open_editor_or_preview(&item);
         }
 
         #[unsafe(method(previewItem:))]
         fn preview_item(&self, _s: &AnyObject) {
             let item = self.ivars().item.borrow().clone();
-            with_model_mut(|m| {
-                m.set_selected_id(Some(item.id.clone()));
-                m.preview_selected();
-            });
+            with_model_mut(|m| m.select_for_action(&item));
+            open_editor_or_preview(&item);
         }
 
         #[unsafe(method(pinItem:))]
@@ -1841,8 +2248,10 @@ fn drag_scroll(view: &FooterView, first: &NSEvent) {
     let geo_w = w - 2.0 * 28.0;
     let handle = |ev: &NSEvent| {
         let p = view.convertPoint_fromView(ev.locationInWindow(), None);
-        with_ui(|ui| {
-            let Some(scroll) = ui.scroll.clone() else { return };
+        // Same split as the wheel: the arithmetic happens under the borrow,
+        // the clip write (which re-enters `with_ui` through layout) does not.
+        let plan = with_ui(|ui| {
+            let scroll = ui.scroll.clone()?;
             let thumb = (40.0_f64).max(geo_w * ui.scroll_visible);
             let travel = (geo_w - thumb).max(0.0);
             let f = if travel > 0.0 {
@@ -1850,9 +2259,11 @@ fn drag_scroll(view: &FooterView, first: &NSEvent) {
             } else {
                 0.0
             };
-            let clip = scroll.contentView();
-            clip.setBoundsOrigin(CGPoint::new(f * ui.scroll_range, 0.0));
+            Some((scroll, f * ui.scroll_range))
         });
+        if let Some((scroll, x)) = plan {
+            scroll.contentView().setBoundsOrigin(CGPoint::new(x, 0.0));
+        }
         reload();
     };
     handle(first);
@@ -1880,9 +2291,57 @@ fn drag_scroll(view: &FooterView, first: &NSEvent) {
 // MARK: Public entry points used by panel.rs / the render self-test
 
 /// Re-pull the model and repaint (SwiftUI's body re-evaluation).
+///
+/// Stands down while a system dialog is up. The dialog runs its own nested
+/// event loop, so this — driven by the 0.25 s poll timer, which common modes
+/// keep firing — lands in the middle of it: repainting under a modal sheet
+/// would steal the keyboard back, and any caller still holding the model
+/// borrow would be borrowed twice and abort the process.
 pub(crate) fn refresh() {
+    // Deferred panel rebuilds first: a settings click asks for one rather than
+    // doing it inline, because it would otherwise destroy the view running the
+    // click (see `settings_pane::PanelCommand`). This is the earliest point
+    // that is always outside that dispatch.
+    apply_panel_commands();
+    if crate::shelf::panel::dialog_open() {
+        return;
+    }
     if with_ui(|ui| ui.built) {
         reload();
+    }
+}
+
+/// Run whatever a settings click deferred, in order.
+///
+/// Nothing here may run inside the click's own `mouseUp:`: both commands swap
+/// the panel's content view, which deallocates the old tree — the view whose
+/// method would still be on the stack. Safe from `refresh` (the poll tick and
+/// the notify hook) and from the main queue right after the event returns.
+///
+/// The rebuild is done in place (`panel::retheme`) rather than through
+/// `hide()`/`show()`: `show()` resets the model, which would close the very
+/// settings pane the click came from — and switching the language or the skin
+/// must not throw the user out of the page they were on.
+pub fn apply_panel_commands() {
+    let cmds = crate::shelf::settings_pane::take_panel_commands();
+    if cmds.is_empty() {
+        return;
+    }
+    // A fresh tree opens on the first settings page; carry the user's page over.
+    let tab = settings_view().map(|v| crate::shelf::settings_pane::current_tab(&v));
+    // A form swap (`Relayout`) rebuilds the window *and* its frame; a skin or
+    // language swap (`Reskin`/`Relanguage`) only the tree, keeping the frame so
+    // the shelf does not jump. `panel::relayout` sorts the two forms out.
+    if cmds
+        .iter()
+        .any(|c| matches!(c, crate::shelf::settings_pane::PanelCommand::Relayout))
+    {
+        crate::shelf::panel::relayout();
+    } else {
+        crate::shelf::panel::retheme();
+    }
+    if let (Some(tab), Some(view)) = (tab, settings_view()) {
+        crate::shelf::settings_pane::set_tab(&view, tab);
     }
 }
 
@@ -1891,19 +2350,210 @@ pub(crate) fn root_view() -> Option<Retained<ShelfRootView>> {
     with_ui(|ui| ui.root.clone())
 }
 
+/// Drive the first video card through the same route its "查看" button takes
+/// (`hit_card` → `HitZone::Action` → `run_action`), for `--selftest
+/// previewvideo`. False when the shelf holds no video card.
+///
+/// This is the exact call that used to abort: the preview resolves the
+/// selected file from the model, so running it inside a model borrow re-entered
+/// the RefCell. A test that only opened the data source a different way would
+/// not have caught that.
+pub(crate) fn debug_preview_first_video() -> bool {
+    let index = with_ui(|ui| {
+        ui.cards
+            .iter()
+            .find(|c| c.item.kind == ClipKind::Video)
+            .map(|c| c.index)
+    });
+    let Some(index) = index else { return false };
+    let Some(item) = card_item(index) else { return false };
+    run_action(card::ActionKind::Preview, &item);
+    true
+}
+
+/// Drive the first image card's picture through the same route a real click
+/// takes (`hit_card` → `HitZone::Thumb`), for `--selftest viewer`. False when
+/// no image card has a decoded thumbnail, which is what the caller waits on.
+///
+/// The seed only runs on an empty store (`seed_store_path`), and once the
+/// shelf's default retention has trimmed the older cards away there may be no
+/// image card left — so a viewer render needs a fresh `PASTORY_STORE`.
+pub(crate) fn debug_click_first_thumbnail() -> bool {
+    let row = match with_ui(|ui| (ui.row.clone(), ui.cards.iter().find(|c| c.item.kind == ClipKind::Image && c.thumb.is_some()).map(|c| c.index))) {
+        (Some(row), Some(index)) => (row, index),
+        _ => return false,
+    };
+    let (row, index) = row;
+    let p = match with_ui(|ui| {
+        let c = ui.cards.get(index)?;
+        let ticket = ticket_rect(row.bounds().size.height, c.index, c.selected);
+        let img = c.thumb.as_ref()?;
+        let top = if c.has_title_row() {
+            card::title_row_rect(ticket).max().y
+        } else {
+            ticket.min().y + card::BODY_TOP
+        };
+        let title = c.item.title.as_deref().map(|t| !t.is_empty()).unwrap_or(false);
+        let r = card::photo_rect(ticket, top, title, img);
+        Some(CGPoint::new(r.mid().x, r.mid().y))
+    }) {
+        Some(p) => p,
+        None => return false,
+    };
+    match hit_card(&row, p) {
+        Some((i, HitZone::Thumb)) => {
+            if let Some(item) = card_item(i) {
+                crate::shelf::image_viewer::open(&item.id);
+                return true;
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Self-test hook: the centre of `action`'s button on card `index`, in the
+/// cards row's own coordinates — the same space `hit_card` tests against, so
+/// a click there must land on that button.
+pub(crate) fn selftest_action_center(index: usize, action: card::ActionKind) -> Option<CGPoint> {
+    let row = with_ui(|ui| ui.row.clone())?;
+    let (kind, selected) =
+        with_ui(|ui| ui.cards.get(index).map(|c| (c.item.kind, c.selected)))?;
+    let ticket = ticket_rect(row.bounds().size.height, index, selected);
+    card::action_rects(ticket, kind)
+        .into_iter()
+        .find(|(k, _)| *k == action)
+        .map(|(_, r)| r.mid())
+}
+
+/// Self-test hook: the centre of card `index`'s title row, in the cards row's
+/// own coordinates — the same space `hit_card` and the inline editor's frame
+/// are computed in, so a click there must land on the drawn title. `None` when
+/// the card has no title row.
+pub(crate) fn selftest_title_row_center(index: usize) -> Option<CGPoint> {
+    let row = with_ui(|ui| ui.row.clone())?;
+    let (selected, titled) = with_ui(|ui| {
+        ui.cards.get(index).map(|c| (c.selected, c.has_title_row()))
+    })?;
+    if !titled {
+        return None;
+    }
+    let r = card::title_row_rect(ticket_rect(row.bounds().size.height, index, selected));
+    Some(CGPoint::new(r.mid().x.round(), r.mid().y.round()))
+}
+
+/// Self-test hook: a point in the cards row's own coordinates, expressed in the
+/// row's window space — what a real click has to carry. The conversion walks the
+/// whole superview chain, so the scroll view's bounds origin is included.
+pub(crate) fn selftest_row_point_in_window(p: CGPoint) -> Option<CGPoint> {
+    let row = with_ui(|ui| ui.row.clone())?;
+    Some(row.convertPoint_toView(p, None))
+}
+
+/// Self-test hook: deliver a click at `p` (cards-row coordinates) through the
+/// real `mouseDown:` / `mouseUp:` route, so hit-testing, action dispatch and
+/// the reload that follows all run exactly as they do for a user's click.
+/// Returns false when the tree or its window is missing.
+pub(crate) fn selftest_click_at(p: CGPoint) -> bool {
+    let Some(row) = with_ui(|ui| ui.row.clone()) else {
+        return false;
+    };
+    let Some(window) = row.window() else {
+        return false;
+    };
+    let loc = row.convertPoint_toView(p, None);
+    let number = window.windowNumber();
+    let event = |kind| {
+        NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            loc,
+            objc2_app_kit::NSEventModifierFlags::empty(),
+            0.0,
+            number,
+            None,
+            0,
+            1,
+            0.0,
+        )
+        .expect("synthetic mouse event")
+    };
+    // SAFETY: `CardsRowView` is an NSView subclass; this is the same dispatch
+    // AppKit performs for a real click in the row.
+    let row_obj: &AnyObject = unsafe { &*(&*row as *const CardsRowView as *const AnyObject) };
+    unsafe {
+        let down = event(objc2_app_kit::NSEventType::LeftMouseDown);
+        let up = event(objc2_app_kit::NSEventType::LeftMouseUp);
+        let _: () = msg_send![row_obj, mouseDown: &*down];
+        let _: () = msg_send![row_obj, mouseUp: &*up];
+    }
+    true
+}
+
+/// Self-test hook: the centre of sidebar nav row `i` (0 clipboard, 1 settings,
+/// 2 contact) in window coordinates, so a self-test can aim a real click at
+/// it. `None` before the tree is built. The row geometry mirrors the draw and
+/// mouseUp code above on purpose: one formula, three readers.
+pub(crate) fn selftest_sidebar_row_center(i: usize) -> Option<CGPoint> {
+    let sidebar = with_ui(|ui| ui.sidebar.clone())?;
+    let brand_font = theme::brand_font(BRAND_SIZE);
+    let rows_top = 10.0 + card::line_height(&brand_font) + 22.0;
+    let center = CGPoint::new(SIDEBAR_W / 2.0, rows_top + i as f64 * 60.0 + 30.0);
+    Some(sidebar.convertPoint_toView(center, None))
+}
+
+/// Self-test hook: deliver a click at `p` (window coordinates) straight to
+/// the sidebar's `mouseDown:`/`mouseUp:` — the same dispatch a real click in
+/// the sidebar takes, without going through the window server.
+pub(crate) fn selftest_sidebar_click_at(p: CGPoint) -> bool {
+    let Some(sidebar) = with_ui(|ui| ui.sidebar.clone()) else {
+        return false;
+    };
+    let Some(window) = sidebar.window() else {
+        return false;
+    };
+    let number = window.windowNumber();
+    let event = |kind| {
+        NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            p,
+            objc2_app_kit::NSEventModifierFlags::empty(),
+            0.0,
+            number,
+            None,
+            0,
+            1,
+            0.0,
+        )
+        .expect("synthetic mouse event")
+    };
+    // SAFETY: `SidebarView` is an NSView subclass; this is the same dispatch
+    // AppKit performs for a real click in the sidebar.
+    let obj: &AnyObject = unsafe { &*(&*sidebar as *const SidebarView as *const AnyObject) };
+    unsafe {
+        let down = event(objc2_app_kit::NSEventType::LeftMouseDown);
+        let up = event(objc2_app_kit::NSEventType::LeftMouseUp);
+        let _: () = msg_send![obj, mouseDown: &*down];
+        let _: () = msg_send![obj, mouseUp: &*up];
+    }
+    true
+}
+
 /// Bump the search field into first responder and flush pending keystrokes
 /// (⌘F / showSearch / direct typing).
 pub(crate) fn focus_search_now() {
-    with_ui(focus_search_field);
+    let field = with_ui(focus_search_plan);
+    if let Some(field) = field {
+        let root = with_ui(|ui| ui.root.clone());
+        if let Some(w) = root.as_ref().and_then(|r| r.window()) {
+            w.makeFirstResponder(Some(&field));
+        }
+    }
 }
 
 /// Drop keyboard focus after show() (the caret must not sit in the box).
 pub(crate) fn drop_focus_now() {
-    with_ui(|ui| {
-        if let Some(root) = &ui.root {
-            if let Some(w) = root.window() {
-                w.makeFirstResponder(None);
-            }
-        }
-    });
+    let root = with_ui(|ui| ui.root.clone());
+    if let Some(w) = root.as_ref().and_then(|r| r.window()) {
+        w.makeFirstResponder(None);
+    }
 }
