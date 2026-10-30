@@ -101,11 +101,9 @@ define_class!(
 
         #[unsafe(method(menuSettings:))]
         fn menu_settings(&self, _sender: &AnyObject) {
-            if !crate::shelf::panel::is_visible() {
-                crate::shelf::panel::show();
-            }
-            crate::shelf::panel::with_model_mut(|m| m.show_settings = true);
-            crate::shelf::view::refresh();
+            // Form-aware: in the 晾衣绳 this switches to the panel form with the
+            // settings page open (the strip itself cannot host it).
+            crate::shelf::panel::show_settings();
         }
 
         #[unsafe(method(menuCheckUpdates:))]
@@ -221,6 +219,19 @@ impl AppDelegate {
             });
             crate::app::delegate::dispatch_main_after(0.6, Box::new(|| {
                 crate::shelf::panel::show();
+            }));
+        }
+        // 验收开关：`PASTORY_SETTINGS_TAB=<id>` 原本只给离屏渲染选页。面板是
+        // 非激活窗口，外部合成点击会穿透到桌面，所以核对权限徽标这类事只能
+        // 用同一个开关把这一页直接开在真窗口上。正常启动没有这个变量。
+        if crate::app::sandbox::launch()
+            .env
+            .iter()
+            .any(|(k, _)| k == "PASTORY_SETTINGS_TAB")
+        {
+            crate::shelf::panel::with_model_mut(|m| m.show_welcome = false);
+            crate::app::delegate::dispatch_main_after(0.4, Box::new(|| {
+                crate::shelf::panel::show_settings();
             }));
         }
     }

@@ -8,17 +8,26 @@ cd "$(dirname "$0")/rust"
 CONFIG="${CONFIG:-release}"
 # PASTEJAR_FEED_HOST=<feed 域名> 编译期烧进两级取源（docs/MAS_PLAN.md §1-2）；
 # cargo 继承 shell 环境，脚本不主动传——不设置则只走 GitHub（旧行为）。
-# A Developer ID identity in the keychain is used automatically (same
-# signature as the shipped app, so permissions carry over between a local
-# build and a release); otherwise ad-hoc.
+# A keychain identity is used automatically (same signature as the shipped
+# app, so TCC permissions carry over between a local build and a release).
+#
+# Only Developer ID used to be recognised, so a machine holding just the MAS
+# "Apple Distribution" certificate fell back to ad-hoc — and an ad-hoc code
+# requirement is the bare cdhash. Every rebuild then produced a new cdhash:
+# Screen Recording / Accessibility stopped matching while System Settings
+# still listed the app with its switch on (the record belongs to the older
+# binary). Order: Developer ID (notarizable) → Apple Development → Apple
+# Distribution (MAS). Nothing found → ad-hoc.
 if [ -z "${SIGN_ID:-}" ]; then
     IDS="$(security find-identity -v -p codesigning 2>/dev/null || true)"
-    DEV="$(echo "$IDS" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"' || true)"
-    if [ -n "$DEV" ]; then
-        SIGN_ID="$DEV"
-    else
-        SIGN_ID="-"
-    fi
+    SIGN_ID="-"
+    for PREFIX in "Developer ID Application: " "Apple Development: " "Apple Distribution: "; do
+        FOUND="$(echo "$IDS" | grep -o "\"${PREFIX}[^\"]*\"" | head -1 | tr -d '"' || true)"
+        if [ -n "$FOUND" ]; then
+            SIGN_ID="$FOUND"
+            break
+        fi
+    done
 fi
 
 REPO="$(pwd)/.."
@@ -53,7 +62,7 @@ if [ -n "${APP_TITLE:-}" ]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_TITLE}" "$APP/Contents/Info.plist"
 fi
 [ -d "$REPO/Resources/Fonts" ] && cp -R "$REPO/Resources/Fonts" "$APP/Contents/Resources/Fonts"
-for f in AppIcon.icns Logo.png Pushpin.png MenuIcon.png MenuIcon@2x.png WeChatGroup.png Coffee.png; do
+for f in AppIcon.icns Logo.png Pushpin.png MenuIcon.png MenuIcon@2x.png WeChatGroup.png WeChatPersonal.png Coffee.png ClothesPin.png; do
     [ -f "$REPO/Resources/$f" ] && cp "$REPO/Resources/$f" "$APP/Contents/Resources/$f"
 done
 
