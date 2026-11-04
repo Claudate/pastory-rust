@@ -318,7 +318,7 @@ if [[ -f "$BIN" ]]; then
 fi
 
 ENT_KEYS=$(/usr/bin/codesign -d --entitlements :- "$APP_BUNDLE" 2>/dev/null | /usr/bin/grep -o 'com.apple.security[a-z.-]*' | sort -u | tr '\n' ' ')
-for k in com.apple.security.app-sandbox com.apple.security.network.client com.apple.security.accessibility; do
+for k in com.apple.security.app-sandbox com.apple.security.network.client; do
   case " $ENT_KEYS " in
     *" $k "*) : ;;
     *) die "app 缺 entitlements：$k（现有：$ENT_KEYS）" "确认 Resources/PasteJar.entitlements 没被改动，再重跑构建" ;;

@@ -70,7 +70,9 @@ done
 # notarization requires.
 SIGN_FLAGS=()
 case "$SIGN_ID" in "Developer ID Application"*) SIGN_FLAGS=(--options runtime --timestamp);; esac
-if ! codesign --force --sign "$SIGN_ID" ${SIGN_FLAGS[@]+"${SIGN_FLAGS[@]}"} --entitlements "$REPO/Resources/Pastory.entitlements" "$APP" 2>/dev/null; then
-    codesign --force --sign "$SIGN_ID" ${SIGN_FLAGS[@]+"${SIGN_FLAGS[@]}"} "$APP"
-fi
+# 直发版不带沙盒授权：Resources/Pastory.entitlements（app-sandbox）只属于
+# build-mas.sh，那份脚本同时嵌入授权它的 provisioning profile。非 MAS 构建
+# 带上 app-sandbox 却没有 profile 时，内核拒绝为它建立沙盒，launchd 直接
+# spawn 失败（2026-11-02 那份构建就是这样起不来的）。
+codesign --force --sign "$SIGN_ID" ${SIGN_FLAGS[@]+"${SIGN_FLAGS[@]}"} "$APP"
 echo "→ $APP (signed: $SIGN_ID)"

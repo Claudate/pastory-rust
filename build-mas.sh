@@ -41,11 +41,21 @@ CONFIG="${CONFIG:-release}"
 # profile 里的 application-identifier。security cms -D 在受限会话里会被拒，
 # 退到 strings（profile 是 CMS 包的 plist，字符串仍可读）。
 profile_app_id() {
-    local p="$1" out=""
+    local p="$1" out="" appid=""
     out=$(security cms -D -i "$p" 2>/dev/null) || out=""
     if [ -n "$out" ]; then
-        printf '%s' "$out" | /usr/bin/plutil -extract Entitlements.application-identifier raw -o - - 2>/dev/null && return 0
+        # plutil 失败时会把错误写到 stdout（不是 stderr），以前 `cmd && return 0`
+        # 会把那段错误原样当成 app id，于是「profile 绑的是别的 app」——错的判定
+        # 让一个完全正确的 profile 被拒（2026-11-02 实测）。这里只认长得像
+        # TeamID.com.xxx 的结果，其余一律丢掉再走 strings 兜底。
+        appid=$(printf '%s' "$out" | /usr/bin/plutil -extract Entitlements.application-identifier raw -o - - 2>/dev/null) || appid=""
+        case "$appid" in
+            [A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9].com.*)
+                printf '%s' "$appid"; return 0 ;;
+        esac
     fi
+    # 受限会话里 security cms -D 会被拒（返回空），profile 本身仍是 CMS 包的
+    # plist，字符串仍可读——退到 strings。
     strings -a "$p" 2>/dev/null | grep -oE '[A-Z0-9]{10}\.com\.[A-Za-z0-9._-]+' | head -1
 }
 
@@ -184,7 +194,10 @@ if [ "$SIGN_ID" != "-" ] && [ -n "${PROVISION_PROFILE:-}" ] && [ -n "$INSTALLER_
         exit 1
     fi
     ENT_KEYS=$(/usr/bin/codesign -d --entitlements :- "$APP" 2>/dev/null | /usr/bin/grep -o 'com.apple.security[a-z.-]*' | sort -u | tr '\n' ' ')
-    for k in com.apple.security.app-sandbox com.apple.security.network.client com.apple.security.accessibility; do
+    # 只查 Resources/PasteJar.entitlements 里真实存在的那两项。
+    # com.apple.security.accessibility 不是 entitlement（macOS 的辅助功能由用户在
+    # 系统设置里授权），写在这里会让每个构建都误报缺授权。
+    for k in com.apple.security.app-sandbox com.apple.security.network.client; do
         case " $ENT_KEYS " in
             *" $k "*) : ;;
             *) echo "✗ app 缺 entitlements：$k（现有：$ENT_KEYS）" >&2; exit 1 ;;

@@ -15,6 +15,10 @@
 #   A. ASC_KEY_ID=<Key ID>  ASC_ISSUER_ID=<Issuer ID>
 #      私钥 ~/.appstoreconnect/private_keys/AuthKey_<Key ID>.p8
 #   B. ASC_USERNAME=<apple id>  ASC_PASSWORD=<App 专用密码>
+#      （也认 APPLE_ID / APP_SPECIFIC_PASSWORD 这两个名字）
+#      两个都没设时脚本会不带回显地问（不进 shell 历史）。
+#      注意：iTMSTransporter 只接受 `-p <值>`，所以密码会出现在 argv 里，
+#      本机 ps 可见——这是 Transporter 的限制，别在共享机器上跑。
 #
 # 物料文案/截图/隐私标签 → store-assets/README.md
 # 沙盒行为分叉与上架计划 → docs/MAS_PLAN.md
@@ -22,7 +26,12 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-TRANSPORTER="/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter"
+TRANSPORTER=""
+for p in /Applications/Transporter.app/Contents/itms/bin/iTMSTransporter \
+         /usr/local/itms/bin/iTMSTransporter; do
+  [[ -x "$p" ]] && TRANSPORTER="$p" && break
+done
+[[ -n "$TRANSPORTER" ]] || TRANSPORTER="/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter"
 DO_UPLOAD=0
 VIA="auto"
 PKG_ARG=""
@@ -114,23 +123,45 @@ try_deliver() {
 }
 
 try_transporter() {
-  [[ -x "$TRANSPORTER" ]] || { echo "  ! 没有 Transporter.app（$TRANSPORTER）" >&2; return 1; }
+  [[ -x "$TRANSPORTER" ]] || { echo "  ! 没有 iTMSTransporter（找过 Transporter.app 与 /usr/local/itms）；装一次 Transporter 再试" >&2; return 1; }
   local auth=()
+  local pass=""
+  local provider="${ASC_PROVIDER_ID:-${ASC_PROVIDER:-}}"
   if [[ -n "${ASC_KEY_ID:-}" && -n "${ASC_ISSUER_ID:-}" ]]; then
     auth=(-apiKey "$ASC_KEY_ID" -apiIssuer "$ASC_ISSUER_ID")
-  elif [[ -n "${ASC_USERNAME:-}" && -n "${ASC_PASSWORD:-}" ]]; then
-    # 密码经 @env 传入，不出现在进程命令行里
-    auth=(-u "$ASC_USERNAME" -p "@env:ASC_PASSWORD")
+  elif [[ -n "${ASC_USERNAME:-}${APPLE_ID:-}" ]]; then
+    local user="${ASC_USERNAME:-${APPLE_ID:-}}"
+    pass="${ASC_PASSWORD:-${APP_SPECIFIC_PASSWORD:-}}"
+    if [[ -z "$pass" ]]; then
+      # 不回显：密码不该出现在屏幕上，也不该被终端记录。
+      printf 'App 专用密码（%s，输入不回显）：' "$user" >&2
+      read -rs pass
+      echo >&2
+    fi
+    [[ -n "$pass" ]] || { echo "  ! 密码为空" >&2; return 1; }
+    # 必须显式给值：`-p` 留空会被 commons-cli 判成 MissingArgumentException，
+    # 密码直接进 argv（本机专用密码，ps 可见可接受）。
+    auth=(-u "$user" -p "$pass")
+    # 团队短名（10 位 Team ID）。没有它 Transporter 报「Client configuration failed」，
+    # 只有 -m provider 能查出来：输出是编号 + 两个名字列，取最后一列。
+    # 必须在密码到手之后再查。
+    if [[ -z "$provider" ]]; then
+      provider="$("$TRANSPORTER" -m provider "${auth[@]}" 2>/dev/null \
+        | awk '/^[0-9]+ +/ {print $NF}' | head -1 || true)"
+    fi
   else
-    echo "  ! 没有可用凭据（ASC_KEY_ID/ASC_ISSUER_ID 或 ASC_USERNAME/ASC_PASSWORD）" >&2
+    echo "  ! 没有可用凭据（ASC_KEY_ID/ASC_ISSUER_ID 或 ASC_USERNAME/APPLE_ID + App 专用密码）" >&2
     return 1
   fi
-  note "iTMSTransporter 上传中…（大包要几分钟）"
+  [[ -n "$provider" ]] || { echo "  ! 认不出 Team ID，设 ASC_PROVIDER_ID=<10 位 Team ID> 再试" >&2; return 1; }
+  note "iTMSTransporter 上传中…（provider $provider，大包要几分钟）"
   local log; log="$(mktemp -t pastejar-transporter)"
   set +e
-  "$TRANSPORTER" -m upload -assetFile "$PKG" -distribution AppStore -v informational "${auth[@]}" >"$log" 2>&1
+  "$TRANSPORTER" -m upload -assetFile "$PKG" -distribution AppStore \
+    -itc_provider "$provider" -v informational "${auth[@]}" >"$log" 2>&1
   local rc=$?
   set -e
+  unset pass
   # 接 grep 会把退出码换成 grep 的；这里先存日志再过滤
   grep -viE "DEBUG: |DBG-X|Setting System property|Configuring logging|SMART-CLIENT" "$log" || true
   rm -f "$log"
